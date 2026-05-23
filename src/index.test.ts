@@ -44,8 +44,8 @@ describe("toDisplayName", () => {
     expect(toDisplayName("Llama")).toBe("Llama");
   });
 
-  it("falls back to the full id when the segment after the slash is empty", () => {
-    expect(toDisplayName("openai/")).toBe("Openai/");
+  it("strips trailing slash when the segment after the slash is empty", () => {
+    expect(toDisplayName("openai/")).toBe("Openai");
   });
 });
 
@@ -418,6 +418,41 @@ describe("buildProviderConfig", () => {
     // cost is not set when input_cost_per_token is not a number
     expect(entry?.cost).toBeUndefined();
   });
+
+  it("warns and overwrites when duplicate model ids produce the same sanitized key", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const models = [
+        { id: "my-model", object: "model" },
+        { id: "my-model", object: "model" },
+      ];
+      const config = buildProviderConfig(models, "http://localhost:4000");
+      // Only one entry should exist (last one wins)
+      expect(Object.keys(config.models ?? {})).toHaveLength(1);
+      expect(config.models?.["my-model"]).toBeDefined();
+      // A warning must have been emitted for the duplicate
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy.mock.calls[0][0]).toContain("my-model");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("warns when different ids sanitize to the same key", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // "my model" and "my_model" both sanitize to "my_model"
+      const models = [
+        { id: "my model", object: "model" },
+        { id: "my_model", object: "model" },
+      ];
+      const config = buildProviderConfig(models, "http://localhost:4000");
+      expect(Object.keys(config.models ?? {})).toHaveLength(1);
+      expect(warnSpy).toHaveBeenCalledOnce();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -784,6 +819,164 @@ describe("validateConfig", () => {
       expect(result.error.issues.length).toBeGreaterThan(0);
       expect(result.error.issues[0].path).toContain("logLevel");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stripExternalRefs behaviour (tested indirectly via validateConfig)
+// ---------------------------------------------------------------------------
+
+describe("stripExternalRefs via validateConfig", () => {
+  /**
+   * Schema with an external-ref-only node (no sibling `type`).
+   * Before the fix, stripping the $ref would leave `{}` which JSON Schema
+   * treats as "accept anything" — so `{ model: 42 }` would pass even though
+   * the field should be a string.  After the fix the node becomes `true`
+   * (canonical "accept anything"), which is behaviourally identical for valid
+   * inputs but makes the intent explicit and avoids the empty-object ambiguity.
+   */
+  const SCHEMA_WITH_EXTERNAL_REF_ONLY_NODE = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $ref: "#/$defs/Config",
+    $defs: {
+      Config: {
+        type: "object",
+        properties: {
+          $schema: { type: "string" },
+          // model has ONLY an external $ref — no sibling "type"
+          model: { $ref: "https://models.dev/model-schema.json#/$defs/Model" },
+          // name has BOTH type and an external $ref (the common pattern)
+          name: {
+            type: "string",
+            $ref: "https://models.dev/model-schema.json#/$defs/Model",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  };
+
+  beforeEach(() => {
+    resetSchemaCache();
+    vi.stubGlobal("fetch", vi.fn());
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => SCHEMA_WITH_EXTERNAL_REF_ONLY_NODE,
+    } as Response);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetSchemaCache();
+  });
+
+  it("accepts a valid config where model is a string", async () => {
+    await expect(
+      validateConfig({ model: "anthropic/claude-3-5-sonnet" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("accepts a valid config where name is a string", async () => {
+    await expect(validateConfig({ name: "My Config" })).resolves.toBeUndefined();
+  });
+
+  it("rejects unknown top-level keys even when schema has external-ref-only nodes", async () => {
+    await expect(
+      validateConfig({ unknownKey: "value" }),
+    ).rejects.toThrow(/OpenCode schema/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLI: warning when --model-info is omitted
+// ---------------------------------------------------------------------------
+
+describe("createProgram: warns when --model-info is not set", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    resetSchemaCache();
+    tmpDir = mkdtempSync(join(tmpdir(), "litellm-test-"));
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    // Mock fetch: schema endpoint + /v1/models endpoint
+    vi.stubGlobal("fetch", vi.fn());
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("opencode.ai")) {
+        return { ok: true, json: async () => MOCK_OPENCODE_SCHEMA } as Response;
+      }
+      // /v1/models
+      return {
+        ok: true,
+        json: async () => ({ data: [{ id: "gpt-4o", object: "model" }] }),
+      } as Response;
+    });
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+    vi.unstubAllGlobals();
+    resetSchemaCache();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("emits a warning when --model-info is not passed", async () => {
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+    ]);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/--model-info/),
+    );
+  });
+
+  it("does not emit the warning when --model-info is passed", async () => {
+    // Also mock /v1/model/info
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("opencode.ai")) {
+        return { ok: true, json: async () => MOCK_OPENCODE_SCHEMA } as Response;
+      }
+      if (url.includes("model/info")) {
+        return {
+          ok: true,
+          json: async () => ({ data: [] }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ data: [{ id: "gpt-4o", object: "model" }] }),
+      } as Response;
+    });
+
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--model-info",
+    ]);
+
+    const warnCalls = warnSpy.mock.calls.map((c) => c[0] as string);
+    expect(warnCalls.every((msg) => !msg.includes("--model-info"))).toBe(true);
   });
 });
 

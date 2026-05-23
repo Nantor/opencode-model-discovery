@@ -224,16 +224,34 @@ const OPENCODE_SCHEMA_URL = "https://opencode.ai/config.json";
 /**
  * Recursively remove any "$ref" keys whose value starts with "http" (external refs).
  * z.fromJSONSchema() only supports local refs (#/...).
+ *
+ * When the external "$ref" is the *only* key in an object, dropping it would
+ * produce `{}` which JSON Schema treats as "accept anything" — identical to the
+ * behaviour we want, but for the wrong reason (an empty schema is vacuously
+ * true rather than explicitly permissive).  We use the boolean schema `true`
+ * instead, which is the canonical JSON Schema way to express "any value is
+ * valid" and makes the intent explicit.
  */
 function stripExternalRefs(obj: unknown): unknown {
   if (Array.isArray(obj)) {
     return obj.map(stripExternalRefs);
   }
   if (obj !== null && typeof obj === "object") {
+    const record = obj as Record<string, unknown>;
+    const hasOnlyExternalRef =
+      Object.keys(record).length === 1 &&
+      typeof record["$ref"] === "string" &&
+      (record["$ref"] as string).startsWith("http");
+    if (hasOnlyExternalRef) {
+      // Replace with the boolean `true` schema (accept anything) so that
+      // z.fromJSONSchema() doesn't misinterpret an empty object as a fully
+      // unconstrained schema that coincidentally passes all inputs.
+      return true;
+    }
     const result: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    for (const [k, v] of Object.entries(record)) {
       if (k === "$ref" && typeof v === "string" && v.startsWith("http")) {
-        // drop external $ref
+        // drop external $ref that coexists with other keywords (e.g. "type")
         continue;
       }
       result[k] = stripExternalRefs(v);
@@ -311,10 +329,12 @@ export async function getOpenCodeConfigSchema(): Promise<
  * Build a display name from a raw model id, e.g. "gpt-4o-mini" → "Gpt 4o Mini"
  */
 export function toDisplayName(id: string): string {
+  // strip trailing slashes before processing (e.g. "openai/" → "openai")
+  const trimmed = id.replace(/\/+$/, "");
   // strip potential provider prefix like "openai/" or "anthropic/"
-  const segment = id.includes("/") ? id.split("/").pop()! : id;
-  // fall back to the full id when the trailing segment is empty (e.g. "openai/")
-  const base = segment || id;
+  const segment = trimmed.includes("/") ? trimmed.split("/").pop()! : trimmed;
+  // fall back to the trimmed id when the trailing segment is empty
+  const base = segment || trimmed || id;
   return base.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
@@ -559,13 +579,6 @@ export function buildProviderConfig(
         entry.reasoning = true;
       }
 
-      // --- interleaved reasoning tokens ---
-      // When merge_reasoning_content_in_choices is true, the provider streams
-      // reasoning tokens interleaved in the choices[].message.reasoning_content field.
-      if (params?.merge_reasoning_content_in_choices === true) {
-        entry.interleaved = { field: "reasoning_content" };
-      }
-
       // --- tool_call ---
       if (info.supports_function_calling === true || info.supports_tool_choice === true) {
         entry.tool_call = true;
@@ -591,6 +604,19 @@ export function buildProviderConfig(
       }
     }
 
+    // --- interleaved reasoning tokens ---
+    // When merge_reasoning_content_in_choices is true, the provider streams
+    // reasoning tokens interleaved in the choices[].message.reasoning_content field.
+    // This check is independent of model info — params alone is sufficient.
+    if (params?.merge_reasoning_content_in_choices === true) {
+      entry.interleaved = { field: "reasoning_content" };
+    }
+
+    if (key in modelsMap) {
+      console.warn(
+        `[litellm-to-opencode] Duplicate model key "${key}" (from id "${m.id}") — previous entry overwritten.`,
+      );
+    }
     modelsMap[key] = entry;
   }
 
@@ -692,6 +718,10 @@ export function createProgram(): Command {
             } else {
               console.log("No model info available; proceeding without model details.");
             }
+          } else {
+            console.warn(
+              "Warning: --model-info not set. Models will be written without limit, cost, or feature-flag data. Re-run with --model-info to populate richer metadata.",
+            );
           }
 
           // 2. Build provider block
