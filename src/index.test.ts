@@ -975,8 +975,8 @@ describe("createProgram: warns when --model-info is not set", () => {
       "--model-info",
     ]);
 
-    const warnCalls = warnSpy.mock.calls.map((c) => c[0] as string);
-    expect(warnCalls.every((msg) => !msg.includes("--model-info"))).toBe(true);
+    const warnCalls = warnSpy.mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(warnCalls.every((msg: string) => !msg.includes("--model-info"))).toBe(true);
   });
 });
 
