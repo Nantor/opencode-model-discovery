@@ -1,0 +1,344 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Generated schema for Root",
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "model_name": {
+            "type": "string"
+          },
+          "litellm_params": {
+            "type": "object",
+            "properties": {
+              "vertex_project": {
+                "type": "string"
+              },
+              "vertex_location": {
+                "type": "string"
+              },
+              "use_in_pass_through": {
+                "type": "boolean"
+              },
+              "use_litellm_proxy": {
+                "type": "boolean"
+              },
+              "merge_reasoning_content_in_choices": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string"
+              },
+              "api_base": {
+                "type": "string"
+              },
+              "api_version": {
+                "type": "string"
+              },
+              "custom_llm_provider": {
+                "type": "string"
+              },
+              "aws_region_name": {
+                "type": "string"
+              },
+              "encoding_format": {
+                "type": "string"
+              },
+              "allowed_openai_params": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "base_model": {
+                "type": "string"
+              },
+              "drop_params": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "use_in_pass_through",
+              "use_litellm_proxy",
+              "merge_reasoning_content_in_choices",
+              "model"
+            ]
+          },
+          "model_info": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "db_model": {
+                "type": "boolean"
+              },
+              "cache_creation_input_token_cost": {
+                "type": "number"
+              },
+              "cache_creation_input_token_cost_above_1hr": {
+                "type": "number"
+              },
+              "cache_read_input_token_cost": {
+                "type": "number"
+              },
+              "input_cost_per_token": {},
+              "output_cost_per_token": {
+                "type": "number"
+              },
+              "key": {
+                "type": "string"
+              },
+              "max_tokens": {
+                "type": "number"
+              },
+              "max_input_tokens": {
+                "type": "number"
+              },
+              "max_output_tokens": {
+                "type": "number"
+              },
+              "input_cost_per_token_flex": {},
+              "input_cost_per_token_priority": {
+                "type": "number"
+              },
+              "cache_creation_input_token_cost_above_200k_tokens": {
+                "type": "number"
+              },
+              "cache_read_input_token_cost_above_200k_tokens": {
+                "type": "number"
+              },
+              "cache_read_input_token_cost_above_272k_tokens": {
+                "type": "number"
+              },
+              "cache_read_input_token_cost_flex": {},
+              "cache_read_input_token_cost_priority": {
+                "type": "number"
+              },
+              "input_cost_per_character": {},
+              "input_cost_per_token_above_128k_tokens": {},
+              "input_cost_per_token_above_200k_tokens": {
+                "type": "number"
+              },
+              "input_cost_per_token_above_272k_tokens": {
+                "type": "number"
+              },
+              "input_cost_per_query": {},
+              "input_cost_per_second": {},
+              "input_cost_per_audio_token": {
+                "type": "number"
+              },
+              "input_cost_per_image_token": {},
+              "input_cost_per_image": {},
+              "input_cost_per_audio_per_second": {},
+              "input_cost_per_video_per_second": {},
+              "input_cost_per_token_batches": {
+                "type": "number"
+              },
+              "output_cost_per_token_batches": {
+                "type": "number"
+              },
+              "output_cost_per_token_flex": {},
+              "output_cost_per_token_priority": {
+                "type": "number"
+              },
+              "output_cost_per_audio_token": {},
+              "output_cost_per_character": {},
+              "output_cost_per_reasoning_token": {
+                "type": "number"
+              },
+              "output_cost_per_token_above_128k_tokens": {},
+              "output_cost_per_character_above_128k_tokens": {},
+              "output_cost_per_token_above_200k_tokens": {
+                "type": "number"
+              },
+              "output_cost_per_token_above_272k_tokens": {
+                "type": "number"
+              },
+              "output_cost_per_second": {},
+              "output_cost_per_second_1080p": {},
+              "output_cost_per_video_per_second": {},
+              "output_cost_per_image": {
+                "type": "number"
+              },
+              "output_cost_per_image_token": {},
+              "output_vector_size": {
+                "type": "number"
+              },
+              "citation_cost_per_token": {},
+              "tiered_pricing": {},
+              "litellm_provider": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "supports_system_messages": {
+                "type": "boolean"
+              },
+              "supports_response_schema": {
+                "type": "boolean"
+              },
+              "supports_vision": {
+                "type": "boolean"
+              },
+              "supports_function_calling": {
+                "type": "boolean"
+              },
+              "supports_tool_choice": {
+                "type": "boolean"
+              },
+              "supports_assistant_prefill": {
+                "type": "boolean"
+              },
+              "supports_prompt_caching": {
+                "type": "boolean"
+              },
+              "supports_audio_input": {
+                "type": "boolean"
+              },
+              "supports_audio_output": {
+                "type": "boolean"
+              },
+              "supports_pdf_input": {
+                "type": "boolean"
+              },
+              "supports_embedding_image_input": {},
+              "supports_native_streaming": {
+                "type": "boolean"
+              },
+              "supports_native_structured_output": {
+                "type": "boolean"
+              },
+              "supports_web_search": {
+                "type": "boolean"
+              },
+              "supports_url_context": {
+                "type": "boolean"
+              },
+              "supports_reasoning": {
+                "type": "boolean"
+              },
+              "supports_none_reasoning_effort": {
+                "type": "boolean"
+              },
+              "supports_minimal_reasoning_effort": {
+                "type": "boolean"
+              },
+              "supports_low_reasoning_effort": {},
+              "supports_xhigh_reasoning_effort": {
+                "type": "boolean"
+              },
+              "supports_max_reasoning_effort": {
+                "type": "boolean"
+              },
+              "supports_computer_use": {
+                "type": "boolean"
+              },
+              "search_context_cost_per_query": {
+                "type": "object",
+                "properties": {
+                  "search_context_size_low": {
+                    "type": "number"
+                  },
+                  "search_context_size_medium": {
+                    "type": "number"
+                  },
+                  "search_context_size_high": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "search_context_size_low",
+                  "search_context_size_medium",
+                  "search_context_size_high"
+                ]
+              },
+              "tpm": {},
+              "rpm": {},
+              "ocr_cost_per_page": {},
+              "annotation_cost_per_page": {},
+              "provider_specific_entry": {},
+              "uses_embed_content": {},
+              "supported_openai_params": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "updated_at": {},
+              "updated_by": {},
+              "created_at": {},
+              "created_by": {},
+              "base_model": {},
+              "tier": {},
+              "team_id": {},
+              "team_public_model_name": {},
+              "reasoning": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "db_model",
+              "input_cost_per_token",
+              "output_cost_per_token",
+              "key",
+              "input_cost_per_token_flex",
+              "cache_read_input_token_cost_flex",
+              "input_cost_per_character",
+              "input_cost_per_token_above_128k_tokens",
+              "input_cost_per_query",
+              "input_cost_per_second",
+              "input_cost_per_image_token",
+              "input_cost_per_image",
+              "input_cost_per_audio_per_second",
+              "input_cost_per_video_per_second",
+              "output_cost_per_token_flex",
+              "output_cost_per_audio_token",
+              "output_cost_per_character",
+              "output_cost_per_token_above_128k_tokens",
+              "output_cost_per_character_above_128k_tokens",
+              "output_cost_per_second",
+              "output_cost_per_second_1080p",
+              "output_cost_per_video_per_second",
+              "output_cost_per_image_token",
+              "citation_cost_per_token",
+              "tiered_pricing",
+              "litellm_provider",
+              "mode",
+              "supports_embedding_image_input",
+              "supports_low_reasoning_effort",
+              "tpm",
+              "rpm",
+              "ocr_cost_per_page",
+              "annotation_cost_per_page",
+              "provider_specific_entry",
+              "uses_embed_content",
+              "supported_openai_params",
+              "updated_at",
+              "updated_by",
+              "created_at",
+              "created_by",
+              "base_model",
+              "tier",
+              "team_id",
+              "team_public_model_name"
+            ]
+          }
+        },
+        "required": [
+          "model_name",
+          "litellm_params",
+          "model_info"
+        ]
+      }
+    }
+  },
+  "required": [
+    "data"
+  ]
+}
