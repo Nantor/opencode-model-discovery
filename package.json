@@ -13,7 +13,8 @@
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "test:int": "set -a && . ./dev.env && set +a && tsx src/index.ts --base-url \"$baseURL\" --api-key \"$apiKey\" --provider-name \"$providerName\" --provider-id \"$providerId\" --global"
   },
   "dependencies": {
     "commander": "^12.1.0",

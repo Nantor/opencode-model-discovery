@@ -2,7 +2,12 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 
-import type { OpenCodeConfig, OpenCodeProvider } from "./types.js";
+import type {
+  OpenCodeConfig,
+  OpenCodeModelCost,
+  OpenCodeModelLimit,
+  OpenCodeProvider,
+} from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -11,14 +16,50 @@ import type { OpenCodeConfig, OpenCodeProvider } from "./types.js";
 /**
  * Build a display name from a raw model id, e.g. "gpt-4o-mini" → "Gpt 4o Mini"
  */
-export function toDisplayName(id: string): string {
+export function toDisplayName(
+  id: string,
+  cost?: OpenCodeModelCost,
+  limit?: OpenCodeModelLimit,
+): string {
   // strip trailing slashes before processing (e.g. "openai/" → "openai")
   const trimmed = id.replace(/\/+$/, "");
   // strip potential provider prefix like "openai/" or "anthropic/"
   const segment = trimmed.includes("/") ? trimmed.split("/").pop()! : trimmed;
   // fall back to the trimmed id when the trailing segment is empty
   const base = segment || trimmed || id;
-  return base.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const name = base
+    .replace(/-/g, " ")
+    .replace(/[*_+~#§%&?=]+$/, "")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  let displayName = name + " ";
+  if (cost) {
+    const costParts = [];
+    if (cost.input)
+      costParts.push(`${cost.input.toFixed(2).replace(/\.?0+$/, "")}↑`);
+    if (cost.output)
+      costParts.push(`${cost.output.toFixed(2).replace(/\.?0+$/, "")}↓`);
+    if (costParts.length > 0) {
+      displayName += `(💰 ${costParts.join(" ")})`;
+    }
+  }
+  if (limit) {
+    const limitParts = [];
+    if (limit.input) limitParts.push(`${toShortNum(limit.input)}↑`);
+    if (limit.context) limitParts.push(`${toShortNum(limit.context)}↻`);
+    if (limit.output) limitParts.push(`${toShortNum(limit.output)}↓`);
+    if (limitParts.length > 0) {
+      displayName += `[🪙 ${limitParts.join(" ")}]`;
+    }
+  }
+  return displayName.trim();
+}
+
+function toShortNum(v: number): string {
+  if (v >= 1e9) return (v / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
+  if (v >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (v >= 1e3) return (v / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
+  return v.toString();
 }
 
 /**

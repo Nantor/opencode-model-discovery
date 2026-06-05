@@ -2,11 +2,10 @@ import { Command } from "commander";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { fetchModels, fetchModelInfo } from "./fetch.js";
+import { fetchModelInfo, testModel } from "./fetch.js";
 import { buildProviderConfig } from "./provider.js";
 import { loadConfig, mergeProvider, resolveOutputPath } from "./utils.js";
 import { validateConfig } from "./schema.js";
-import type { LiteLLMModelInfoEntry } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -49,11 +48,6 @@ export function createProgram(): Command {
       "Print the resulting config to stdout without writing any file",
       false,
     )
-    .option(
-      "--model-info",
-      "Also fetch model details from /v1/model/info to populate max_tokens, cost data, feature flags, etc.",
-      false,
-    )
     .action(
       async (opts: {
         baseUrl: string;
@@ -63,7 +57,6 @@ export function createProgram(): Command {
         global: boolean;
         path?: string;
         dryRun: boolean;
-        modelInfo: boolean;
       }) => {
         try {
           // 0. Validate mutually exclusive flags before any network work
@@ -73,31 +66,22 @@ export function createProgram(): Command {
           }
 
           // 1. Fetch
-          const models = await fetchModels(opts.baseUrl, opts.apiKey);
-          console.log(`Found ${models.length} model(s).`);
+          const modelInfoEntries = await fetchModelInfo(opts.baseUrl, opts.apiKey);
+          console.log(`Found ${modelInfoEntries.length} model(s).`);
 
-          let modelInfoEntries: LiteLLMModelInfoEntry[] = [];
-          if (opts.modelInfo) {
-            modelInfoEntries = await fetchModelInfo(opts.baseUrl, opts.apiKey);
-            if (modelInfoEntries.length > 0) {
-              console.log(`Fetched model info for ${modelInfoEntries.length} model(s).`);
-            } else {
-              console.log("No model info available; proceeding without model details.");
-            }
-          } else {
-            console.warn(
-              "Warning: --model-info not set. Models will be written without limit, cost, or feature-flag data. Re-run with --model-info to populate richer metadata.",
-            );
-          }
-
-          // 2. Build provider block
+          // 2.a Build provider block
           const providerConfig = buildProviderConfig(
-            models,
+            modelInfoEntries,
             opts.baseUrl,
             opts.apiKey,
             opts.providerName,
-            modelInfoEntries,
           );
+
+          // 2.b test all models
+          // for (const [key, model] of Object.entries(providerConfig?.models || {})) {
+          //       const testResult = await testModel(opts.baseUrl, model.id ?? key, opts.apiKey);
+          //       console.log(model.name + ": " + (testResult.ok ? "OK" : `FAIL (${testResult.error})`));
+          // }
 
           // 3. Resolve output path
           const outputPath = resolveOutputPath({
@@ -129,7 +113,7 @@ export function createProgram(): Command {
           writeFileSync(outputPath, output, "utf-8");
           console.log(`\nConfig written to: ${outputPath}`);
           console.log(
-            `Provider "${opts.providerId}" now has ${models.length} model(s) registered.`,
+            `Provider "${opts.providerId}" now has ${modelInfoEntries.length} model(s) registered.`,
           );
         } catch (err) {
           console.error("Error:", err instanceof Error ? err.message : err);
