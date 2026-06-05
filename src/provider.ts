@@ -1,5 +1,4 @@
 import type {
-  LiteLLMModel,
   LiteLLMModelInfo,
   LiteLLMModelInfoEntry,
   LiteLLMParams,
@@ -8,17 +7,17 @@ import type {
   OpenCodeProvider,
 } from "./types.js";
 import { sanitizeKey, toDisplayName } from "./utils.js";
+import { toNum } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Map LiteLLM models → OpenCode provider config
 // ---------------------------------------------------------------------------
 
 export function buildProviderConfig(
-  models: LiteLLMModel[],
+  modelInfoEntries: LiteLLMModelInfoEntry[],
   baseURL: string,
   apiKey?: string,
   providerName = "LiteLLM",
-  modelInfoEntries: LiteLLMModelInfoEntry[] = [],
 ): OpenCodeProvider {
   // Build lookups from model_name → model_info and model_name → litellm_params
   const infoMap = new Map<string, LiteLLMModelInfo>();
@@ -37,86 +36,75 @@ export function buildProviderConfig(
 
   const modelsMap: Record<string, OpenCodeModelEntry> = {};
 
-  for (const m of models) {
-    const key = sanitizeKey(m.id);
+  for (const entry of modelInfoEntries) {
+    const id = entry.model_name;
+    const key = sanitizeKey(id);
     // Look up model info and params by original id and sanitized key
-    const info = infoMap.get(m.id) ?? infoMap.get(key);
-    const params = paramsMap.get(m.id) ?? paramsMap.get(key);
-
-    const entry: OpenCodeModelEntry = {
-      name: toDisplayName(m.id),
-      ...(key !== m.id ? { id: m.id } : {}),
+    const info = infoMap.get(id) ?? infoMap.get(key);
+    const params = paramsMap.get(id) ?? paramsMap.get(key);
+    const modelEntry: OpenCodeModelEntry = {
+      ...(key !== id ? { id } : {}),
     };
 
     if (info) {
       // --- limit (context window / token counts) ---
-      // prefer max_input_tokens for context; fall back to max_tokens
-      const contextTokens =
-        typeof info.max_input_tokens === "number"
-          ? info.max_input_tokens
-          : typeof info.max_tokens === "number"
-            ? info.max_tokens
-            : undefined;
-      const outputTokens =
-        typeof info.max_output_tokens === "number" ? info.max_output_tokens : undefined;
+      const contextTokens = toNum(info.max_tokens);
+      const inputTokens = toNum(info.max_input_tokens);
+      const outputTokens = toNum(info.max_output_tokens);
 
       if (contextTokens !== undefined && outputTokens !== undefined) {
-        entry.limit = { context: contextTokens, output: outputTokens };
+        const limit: { context: number; output: number; input?: number } = { context: contextTokens, output: outputTokens };
+        if (inputTokens !== undefined) {
+          limit.input = inputTokens;
+        }
+        modelEntry.limit = limit;
       }
 
       // --- cost (per-token pricing in USD) ---
-      const inputCost =
-        typeof info.input_cost_per_token === "number" ? info.input_cost_per_token : undefined;
-      const outputCost =
-        typeof info.output_cost_per_token === "number" ? info.output_cost_per_token : undefined;
+      const inputCost = toNum(info.input_cost_per_token) !== undefined ? toNum(info.input_cost_per_token!)! * 1_000_000 : undefined;
+      const outputCost = toNum(info.output_cost_per_token) !== undefined ? toNum(info.output_cost_per_token!)! * 1_000_000 : undefined;
 
       if (inputCost !== undefined && outputCost !== undefined) {
         const cost: OpenCodeModelCost = { input: inputCost, output: outputCost };
 
-        if (typeof info.cache_read_input_token_cost === "number") {
-          cost.cache_read = info.cache_read_input_token_cost;
+        if (toNum(info.cache_read_input_token_cost) !== undefined) {
+          cost.cache_read = toNum(info.cache_read_input_token_cost!)! * 1_000_000;
         }
-        if (typeof info.cache_creation_input_token_cost === "number") {
-          cost.cache_write = info.cache_creation_input_token_cost;
+        if (toNum(info.cache_creation_input_token_cost) !== undefined) {
+          cost.cache_write = toNum(info.cache_creation_input_token_cost!)! * 1_000_000;
         }
 
         // context_over_200k pricing tiers
-        const inputOver200k =
-          typeof info.input_cost_per_token_above_200k_tokens === "number"
-            ? info.input_cost_per_token_above_200k_tokens
-            : undefined;
-        const outputOver200k =
-          typeof info.output_cost_per_token_above_200k_tokens === "number"
-            ? info.output_cost_per_token_above_200k_tokens
-            : undefined;
+        const inputOver200k = toNum(info.input_cost_per_token_above_200k_tokens);
+        const outputOver200k = toNum(info.output_cost_per_token_above_200k_tokens);
         if (inputOver200k !== undefined && outputOver200k !== undefined) {
-          cost.context_over_200k = { input: inputOver200k, output: outputOver200k };
-          if (typeof info.cache_read_input_token_cost_above_200k_tokens === "number") {
-            cost.context_over_200k.cache_read = info.cache_read_input_token_cost_above_200k_tokens;
+          cost.context_over_200k = { input: inputOver200k * 1_000_000, output: outputOver200k * 1_000_000 };
+          if (toNum(info.cache_read_input_token_cost_above_200k_tokens) !== undefined) {
+            cost.context_over_200k.cache_read = toNum(info.cache_read_input_token_cost_above_200k_tokens!)! * 1_000_000;
           }
-          if (typeof info.cache_creation_input_token_cost_above_200k_tokens === "number") {
-            cost.context_over_200k.cache_write = info.cache_creation_input_token_cost_above_200k_tokens;
+          if (toNum(info.cache_creation_input_token_cost_above_200k_tokens) !== undefined) {
+            cost.context_over_200k.cache_write = toNum(info.cache_creation_input_token_cost_above_200k_tokens!)! * 1_000_000;
           }
         }
 
-        entry.cost = cost;
+        modelEntry.cost = cost;
       }
 
       // --- reasoning ---
       if (typeof info.supports_reasoning === "boolean" && info.supports_reasoning) {
-        entry.reasoning = true;
+        modelEntry.reasoning = true;
       } else if (typeof info.reasoning === "boolean" && info.reasoning) {
-        entry.reasoning = true;
+        modelEntry.reasoning = true;
       }
 
       // --- tool_call ---
       if (info.supports_function_calling === true || info.supports_tool_choice === true) {
-        entry.tool_call = true;
+        modelEntry.tool_call = true;
       }
 
       // --- attachment (vision / image input) ---
       if (info.supports_vision === true) {
-        entry.attachment = true;
+        modelEntry.attachment = true;
       }
 
       // --- modalities ---
@@ -130,8 +118,19 @@ export function buildProviderConfig(
 
       // Only set modalities when we have something beyond the plain text default
       if (inputModalities.length > 1 || outputModalities.length > 1) {
-        entry.modalities = { input: inputModalities, output: outputModalities };
+        modelEntry.modalities = { input: inputModalities, output: outputModalities };
       }
+    }
+
+    // --- reasoningSummary workaround ---
+    // OpenCode (via @ai-sdk/openai-compatible) sends `reasoningSummary` for
+    // reasoning models. LiteLLM stable (≤1.86.x) forwards it verbatim to the
+    // upstream provider, which rejects it with "Unknown parameter: reasoningSummary".
+    // Setting `options.reasoningSummary: null` at the model level tells the AI SDK
+    // to omit the field entirely, preventing the 400 error when you cannot change
+    // the LiteLLM config yourself.
+    if (modelEntry.reasoning === true) {
+      modelEntry.options = { ...modelEntry.options, reasoningSummary: null };
     }
 
     // --- interleaved reasoning tokens ---
@@ -139,15 +138,16 @@ export function buildProviderConfig(
     // reasoning tokens interleaved in the choices[].message.reasoning_content field.
     // This check is independent of model info — params alone is sufficient.
     if (params?.merge_reasoning_content_in_choices === true) {
-      entry.interleaved = { field: "reasoning_content" };
+      modelEntry.interleaved = { field: "reasoning_content" };
     }
 
     if (key in modelsMap) {
       console.warn(
-        `[litellm-to-opencode] Duplicate model key "${key}" (from id "${m.id}") — previous entry overwritten.`,
+        `[litellm-to-opencode] Duplicate model key "${key}" (from id "${id}") — previous entry overwritten.`,
       );
     }
-    modelsMap[key] = entry;
+    modelEntry.name = toDisplayName(id, modelEntry.cost, modelEntry.limit);
+    modelsMap[key] = modelEntry;
   }
 
   const provider: OpenCodeProvider = {

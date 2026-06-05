@@ -9,53 +9,102 @@ export interface LiteLLMModel {
   owned_by?: string;
 }
 
-export interface LiteLLMModelInfo {
+/** Coerce a value to number, returning undefined if it's not a valid number. */
+export function toNum(v: unknown): number | undefined {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+/** Convert all `number` fields on LiteLLMModelInfo to `number | string`. */
+export function normalizeModelInfo(info: Record<string, unknown> | undefined): LiteLLMModelInfo | undefined {
+  if (!info) return undefined;
+  const numFields = [
+    "cache_creation_input_token_cost",
+    "cache_creation_input_token_cost_above_1hr",
+    "cache_read_input_token_cost",
+    "output_cost_per_token",
+    "max_tokens",
+    "max_input_tokens",
+    "max_output_tokens",
+    "input_cost_per_token_priority",
+    "cache_creation_input_token_cost_above_200k_tokens",
+    "cache_read_input_token_cost_above_200k_tokens",
+    "cache_read_input_token_cost_above_272k_tokens",
+    "cache_read_input_token_cost_priority",
+    "input_cost_per_token_above_200k_tokens",
+    "input_cost_per_token_above_272k_tokens",
+    "input_cost_per_audio_token",
+    "input_cost_per_token_batches",
+    "output_cost_per_token_batches",
+    "output_cost_per_token_priority",
+    "output_cost_per_reasoning_token",
+    "output_cost_per_token_above_200k_tokens",
+    "output_cost_per_token_above_272k_tokens",
+    "output_cost_per_image",
+    "output_vector_size",
+  ];
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(info)) {
+    if (numFields.includes(k)) {
+      result[k] = toNum(v);
+    } else {
+      result[k] = v;
+    }
+  }
+  return result as unknown as LiteLLMModelInfo;
+}
+
+export type LiteLLMModelInfo = {
   id?: string;
   db_model?: boolean;
-  cache_creation_input_token_cost?: number;
-  cache_creation_input_token_cost_above_1hr?: number;
-  cache_read_input_token_cost?: number;
-  input_cost_per_token?: unknown | number;
-  output_cost_per_token?: number;
+  cache_creation_input_token_cost?: number | string;
+  cache_creation_input_token_cost_above_1hr?: number | string;
+  cache_read_input_token_cost?: number | string;
+  input_cost_per_token?: unknown | number | string;
+  output_cost_per_token?: number | string;
   key?: string;
-  max_tokens?: number;
-  max_input_tokens?: number;
-  max_output_tokens?: number;
-  input_cost_per_token_flex?: unknown | number;
-  input_cost_per_token_priority?: number;
-  cache_creation_input_token_cost_above_200k_tokens?: number;
-  cache_read_input_token_cost_above_200k_tokens?: number;
-  cache_read_input_token_cost_above_272k_tokens?: number;
+  max_tokens?: number | string;
+  max_input_tokens?: number | string;
+  max_output_tokens?: number | string;
+  input_cost_per_token_flex?: unknown | number | string;
+  input_cost_per_token_priority?: number | string;
+  cache_creation_input_token_cost_above_200k_tokens?: number | string;
+  cache_read_input_token_cost_above_200k_tokens?: number | string;
+  cache_read_input_token_cost_above_272k_tokens?: number | string;
   cache_read_input_token_cost_flex?: unknown;
-  cache_read_input_token_cost_priority?: number;
+  cache_read_input_token_cost_priority?: number | string;
   input_cost_per_character?: unknown;
-  input_cost_per_token_above_128k_tokens?: unknown | number;
-  input_cost_per_token_above_200k_tokens?: number;
-  input_cost_per_token_above_272k_tokens?: number;
+  input_cost_per_token_above_128k_tokens?: unknown | number | string;
+  input_cost_per_token_above_200k_tokens?: number | string;
+  input_cost_per_token_above_272k_tokens?: number | string;
   input_cost_per_query?: unknown;
   input_cost_per_second?: unknown;
-  input_cost_per_audio_token?: number;
+  input_cost_per_audio_token?: number | string;
   input_cost_per_image_token?: unknown;
   input_cost_per_image?: unknown;
   input_cost_per_audio_per_second?: unknown;
   input_cost_per_video_per_second?: unknown;
-  input_cost_per_token_batches?: number;
-  output_cost_per_token_batches?: number;
+  input_cost_per_token_batches?: number | string;
+  output_cost_per_token_batches?: number | string;
   output_cost_per_token_flex?: unknown;
-  output_cost_per_token_priority?: number;
+  output_cost_per_token_priority?: number | string;
   output_cost_per_audio_token?: unknown;
   output_cost_per_character?: unknown;
-  output_cost_per_reasoning_token?: number;
+  output_cost_per_reasoning_token?: number | string;
   output_cost_per_token_above_128k_tokens?: unknown;
   output_cost_per_character_above_128k_tokens?: unknown;
-  output_cost_per_token_above_200k_tokens?: number;
-  output_cost_per_token_above_272k_tokens?: number;
+  output_cost_per_token_above_200k_tokens?: number | string;
+  output_cost_per_token_above_272k_tokens?: number | string;
   output_cost_per_second?: unknown;
   output_cost_per_second_1080p?: unknown;
   output_cost_per_video_per_second?: unknown;
-  output_cost_per_image?: number;
+  output_cost_per_image?: number | string;
   output_cost_per_image_token?: unknown;
-  output_vector_size?: number;
+  output_vector_size?: number | string;
   citation_cost_per_token?: unknown;
   tiered_pricing?: unknown;
   litellm_provider?: string;
@@ -99,7 +148,7 @@ export interface LiteLLMModelInfo {
   team_id?: unknown;
   team_public_model_name?: unknown;
   reasoning?: boolean;
-}
+};
 
 export interface LiteLLMParams {
   vertex_project?: string;
