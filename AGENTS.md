@@ -22,10 +22,12 @@ Flow: fetch models from `GET /v1/models` → build provider block using `@ai-sdk
 ### Key exported helpers (for tests)
 
 - `fetchModels(baseURL, apiKey?)` — GET `/v1/models`
+- `fetchModelInfo(baseURL, apiKey?)` — GET `/v1/model/info`
 - `buildProviderConfig(models, baseURL, apiKey?, providerName)` — maps models to provider block; `providerName` defaults to `"LiteLLM"`
 - `mergeProvider(existing, providerKey, providerValue)` — replaces named provider, leaves other keys untouched
-- `loadConfig(filePath)` — returns `{ $schema: "https://opencode.ai/config.json" }` for missing/broken files
-- `resolveOutputPath({ global, path })` — `~/.config/opencode/opencode.json` / `--path dir/opencode.json` / `./opencode.json`
+- `loadConfig(filePath)` — loads a file with explicit path; returns `{ $schema: "https://opencode.ai/config.json" }` for missing/broken files
+- `resolveConfigFile(dir)` — resolves config file path: tries `opencode.jsonc` first, then `opencode.json`, defaults to `.json`
+- `resolveOutputPath({ global, path })` — `resolveConfigFile(dir)` / `resolveConfigFile(dir)` / `resolveConfigFile(cwd)`
 - `validateConfig(config)` — fetches + caches schema from opencode.ai, validates config; throws on mismatch
 - `getOpenCodeConfigSchema()` — returns cached Zod schema compiled from OpenCode JSON Schema
 - `resetSchemaCache()` — clears module-level schema cache (test-only)

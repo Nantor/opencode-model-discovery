@@ -3,7 +3,14 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { toDisplayName, sanitizeKey, mergeProvider, loadConfig, resolveOutputPath } from "./utils.js";
+import {
+  toDisplayName,
+  sanitizeKey,
+  mergeProvider,
+  resolveConfigFile,
+  loadConfig,
+  resolveOutputPath,
+} from "./utils.js";
 import type { OpenCodeConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -86,7 +93,10 @@ describe("mergeProvider", () => {
         litellm: { npm: "old", models: {} },
       },
     };
-    const newProvider = { npm: "@ai-sdk/openai-compatible", models: { "gpt-4o": { name: "GPT 4o" } } };
+    const newProvider = {
+      npm: "@ai-sdk/openai-compatible",
+      models: { "gpt-4o": { name: "GPT 4o" } },
+    };
     const result = mergeProvider(config, "litellm", newProvider);
     expect(result.provider?.litellm).toEqual(newProvider);
     expect(result.provider?.existing).toEqual({ npm: "old-npm", models: {} });
@@ -103,6 +113,46 @@ describe("mergeProvider", () => {
     const config = {};
     const result = mergeProvider(config, "myprovider", { models: {} });
     expect(result.provider).toHaveProperty("myprovider");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveConfigFile
+// ---------------------------------------------------------------------------
+
+describe("resolveConfigFile", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "litellm-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns .json path when neither file exists", () => {
+    const result = resolveConfigFile(tmpDir);
+    expect(result).toBe(join(tmpDir, "opencode.json"));
+  });
+
+  it("prefers .jsonc when both files exist", () => {
+    writeFileSync(join(tmpDir, "opencode.jsonc"), "{}// with comment", "utf-8");
+    writeFileSync(join(tmpDir, "opencode.json"), "{}", "utf-8");
+    const result = resolveConfigFile(tmpDir);
+    expect(result).toBe(join(tmpDir, "opencode.jsonc"));
+  });
+
+  it("returns .json when only .json exists", () => {
+    writeFileSync(join(tmpDir, "opencode.json"), "{}", "utf-8");
+    const result = resolveConfigFile(tmpDir);
+    expect(result).toBe(join(tmpDir, "opencode.json"));
+  });
+
+  it("returns .jsonc when only .jsonc exists", () => {
+    writeFileSync(join(tmpDir, "opencode.jsonc"), "{}// with comment", "utf-8");
+    const result = resolveConfigFile(tmpDir);
+    expect(result).toBe(join(tmpDir, "opencode.jsonc"));
   });
 });
 
@@ -133,7 +183,55 @@ describe("loadConfig", () => {
     expect(loadConfig(filePath)).toEqual(data);
   });
 
-  it("returns a default config on invalid JSON", () => {
+  it("parses a JSONC file with comments", () => {
+    const filePath = join(tmpDir, "opencode.jsonc");
+    const content = `{
+  // this is a comment
+  "$schema": "https://opencode.ai/config.json",
+  /* block comment */
+  "provider": {
+    "litellm": {
+      "models": {
+        "model1": /* intermitten comment */ { // trailing comment test
+        },
+        "model2": { /* another comment */
+        },
+        "model3": { "name//": "/* tricky name */" }, // comment after tricky name
+      }
+    }
+  },
+}`;
+    writeFileSync(filePath, content, "utf-8");
+    expect(loadConfig(filePath)).toEqual({
+      $schema: "https://opencode.ai/config.json",
+      provider: {
+        litellm: {
+          models: {
+            model1: {},
+            model2: {},
+            model3: { "name//": "/* tricky name */" },
+          },
+        },
+      },
+    });
+  });
+
+  it("parses a JSONC file with trailing commas", () => {
+    const filePath = join(tmpDir, "opencode.jsonc");
+    const content = `{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "litellm": {}
+  },
+}`;
+    writeFileSync(filePath, content, "utf-8");
+    expect(loadConfig(filePath)).toEqual({
+      $schema: "https://opencode.ai/config.json",
+      provider: { litellm: {} },
+    });
+  });
+
+  it("returns a default config on invalid JSONC", () => {
     const filePath = join(tmpDir, "bad.json");
     writeFileSync(filePath, "not valid json", "utf-8");
     const result = loadConfig(filePath);
@@ -164,6 +262,6 @@ describe("resolveOutputPath", () => {
 
   it("returns path inside ~/.config/opencode/ when --global is set", () => {
     const result = resolveOutputPath({ global: true });
-    expect(result).toMatch(/\.config[/\\]opencode[/\\]opencode\.json$/);
+    expect(result).toMatch(/\.config[/\\]opencode[/\\]opencode\.(json|jsonc)$/);
   });
 });
