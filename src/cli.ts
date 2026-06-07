@@ -52,6 +52,11 @@ export function createProgram(): Command {
       "-d, --detailed-model-info <path>",
       "Path to file with detailed model information",
     )
+    .option(
+      "-r, --reasoning-summary-workaround",
+      "Enable the reasoningSummary workaround for reasoning models (default: true)",
+      true,
+    )
     .action(
       async (opts: {
         baseUrl: string;
@@ -62,6 +67,7 @@ export function createProgram(): Command {
         path?: string;
         dryRun: boolean;
         detailedModelInfo?: string;
+        reasoningSummaryWorkaround: boolean;
       }) => {
         try {
           // 0. Validate mutually exclusive flags before any network work
@@ -80,6 +86,7 @@ export function createProgram(): Command {
             opts.baseUrl,
             opts.apiKey,
             opts.providerName,
+            opts.reasoningSummaryWorkaround,
           );
 
           // 2.b test all models
