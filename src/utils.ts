@@ -63,6 +63,72 @@ function toShortNum(v: number): string {
 }
 
 /**
+ * Strip JSONC comments and trailing commas while preserving string contents by
+ * tracking string boundaries and escape sequences.
+ */
+function stripJsoncComments(input: string): string {
+  let result = "";
+  let i = 0;
+
+  while (i < input.length) {
+    if (input[i] === '"') {
+      // consume a double-quoted string verbatim
+      let str = '"';
+      i++;
+      while (i < input.length && input[i] !== '"') {
+        if (input[i] === '\\') {
+          str += input[i];
+          i++;
+          if (i < input.length) {
+            str += input[i];
+            i++;
+          }
+          continue;
+        }
+        str += input[i];
+        i++;
+      }
+      if (i < input.length) {
+        str += '"';
+        i++;
+      }
+      result += str;
+    } else if (input[i] === '/' && input[i + 1] === '/') {
+      // skip single-line comment
+      while (i < input.length && input[i] !== '\n') i++;
+    } else if (input[i] === '/' && input[i + 1] === '*') {
+      // skip multi-line comment
+      i += 2;
+      while (i < input.length && !(input[i] === '*' && input[i + 1] === '/')) i++;
+      i += 2; // skip */
+    } else {
+      result += input[i];
+      i++;
+    }
+  }
+
+  // now strip trailing commas by removing , before ] or } (with optional whitespace between)
+  let output = "";
+  i = 0;
+  while (i < result.length) {
+    if (result[i] === ',') {
+      // look ahead past whitespace for ] or }
+      let j = i + 1;
+      while (j < result.length && /\s/.test(result[j])) j++;
+      if (result[j] === ']' || result[j] === '}') {
+        // trailing comma — skip it
+        i++;
+        continue;
+      }
+    }
+    output += result[i];
+    i++;
+  }
+
+  return output;
+}
+
+/**
  * Sanitize an arbitrary model id to a valid JSON key.
  * Keeps alphanumerics, hyphens, dots, underscores and forward slashes.
  */
@@ -71,7 +137,20 @@ export function sanitizeKey(id: string): string {
 }
 
 /**
- * Load and parse an existing opencode.json; return empty config on missing file.
+ * Resolve the config file path, trying .jsonc first then .json.
+ * Returns the path of the first existing file, or the .json path as default.
+ */
+export function resolveConfigFile(dir: string): string {
+  const jsoncPath = join(dir, "opencode.jsonc");
+  const jsonPath = join(dir, "opencode.json");
+
+  if (existsSync(jsoncPath)) return jsoncPath;
+  return jsonPath;
+}
+
+/**
+ * Load and parse an existing opencode config file; return empty config on missing file.
+ * Handles both JSON and JSONC (comments, trailing commas) by stripping comments first.
  */
 export function loadConfig(filePath: string): OpenCodeConfig {
   if (!existsSync(filePath)) {
@@ -81,7 +160,7 @@ export function loadConfig(filePath: string): OpenCodeConfig {
   }
   const raw = readFileSync(filePath, "utf-8");
   try {
-    return JSON.parse(raw) as OpenCodeConfig;
+    return JSON.parse(stripJsoncComments(raw)) as OpenCodeConfig;
   } catch {
     console.error(
       `Warning: could not parse existing config at ${filePath} – starting fresh.`,
@@ -109,7 +188,8 @@ export function mergeProvider(
 }
 
 /**
- * Resolve the output file path based on CLI flags.
+ * Resolve the output config file path, trying opencode.jsonc first then opencode.json.
+ * Writes to the returned path; if neither exists, defaults to .json.
  */
 export function resolveOutputPath(opts: {
   global: boolean;
@@ -117,13 +197,12 @@ export function resolveOutputPath(opts: {
 }): string {
   if (opts.global) {
     const dir = join(homedir(), ".config", "opencode");
-    // Return opencode.json (not jsonc) for default global path in tests
-    return join(dir, "opencode.json");
+    return resolveConfigFile(dir);
   }
   if (opts.path) {
     const dir = resolve(opts.path);
-    return join(dir, "opencode.json");
+    return resolveConfigFile(dir);
   }
   // Default: current working directory
-  return resolve(process.cwd(), "opencode.json");
+  return resolveConfigFile(resolve(process.cwd()));
 }

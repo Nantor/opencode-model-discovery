@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { fetchModelInfo, testModel } from "./fetch.js";
+import { fetchModelInfo } from "./fetch.js";
 import { buildProviderConfig } from "./provider.js";
 import { loadConfig, mergeProvider, resolveOutputPath } from "./utils.js";
 import { validateConfig } from "./schema.js";

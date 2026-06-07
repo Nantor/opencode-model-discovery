@@ -17,7 +17,7 @@ import { runCLI } from "./cli.js";
 // ---------------------------------------------------------------------------
 
 export type { OpenCodeConfig } from "./types.js";
-export { toDisplayName, sanitizeKey, loadConfig, mergeProvider, resolveOutputPath } from "./utils.js";
+export { toDisplayName, sanitizeKey, resolveConfigFile, loadConfig, mergeProvider, resolveOutputPath } from "./utils.js";
 export { fetchModels, fetchModelInfo, testModel } from "./fetch.js";
 export { buildProviderConfig } from "./provider.js";
 export { validateConfig, getOpenCodeConfigSchema, resetSchemaCache } from "./schema.js";
