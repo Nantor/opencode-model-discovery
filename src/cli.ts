@@ -20,33 +20,37 @@ export function createProgram(): Command {
       "Fetch models from a LiteLLM-compatible API and write them into an OpenCode provider config.",
     )
     .requiredOption(
-      "--base-url <url>",
+      "-b, --base-url <url>",
       "Base URL of the LiteLLM API, e.g. http://localhost:4000",
     )
     .option(
-      "--api-key <key>",
+      "-k, --api-key <key>",
       "API key / Bearer token for the LiteLLM endpoint",
     )
     .option(
-      "--provider-id <id>",
+      "-p, --provider-id <id>",
       "Provider key used in opencode.json (default: litellm)",
       "litellm",
     )
     .option(
-      "--provider-name <name>",
+      "-n, --provider-name <name>",
       "Human-readable provider display name (default: LiteLLM)",
       "LiteLLM",
     )
     .option(
-      "--global",
+      "-g, --global",
       "Write to the global OpenCode config (~/.config/opencode/opencode.json)",
       false,
     )
-    .option("--path <dir>", "Write to opencode.json inside the given directory")
+    .option("-P, --path <dir>", "Write to opencode.json inside the given directory")
     .option(
-      "--dry-run",
+      "-D, --dry-run",
       "Print the resulting config to stdout without writing any file",
       false,
+    )
+    .option(
+      "-d, --detailed-model-info <path>",
+      "Path to file with detailed model information",
     )
     .action(
       async (opts: {
@@ -57,6 +61,7 @@ export function createProgram(): Command {
         global: boolean;
         path?: string;
         dryRun: boolean;
+        detailedModelInfo?: string;
       }) => {
         try {
           // 0. Validate mutually exclusive flags before any network work
