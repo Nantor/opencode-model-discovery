@@ -216,8 +216,7 @@ describe("testModel", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "gpt-4o-mini",
-          messages: [{ role: "user", content: "Hi" }],
-          max_tokens: 2,
+          messages: [{ role: "user", content: "just return hi" }],
         }),
       }),
     );

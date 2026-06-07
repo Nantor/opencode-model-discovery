@@ -100,8 +100,7 @@ export async function testModel(
       headers,
       body: JSON.stringify({
         model: modelId,
-        messages: [{ role: "user", content: "Hi" }],
-        max_tokens: 2,
+        messages: [{ role: "user", content: "just return hi" }],
       }),
     });
 
