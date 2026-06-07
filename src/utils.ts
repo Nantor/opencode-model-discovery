@@ -117,7 +117,8 @@ export function resolveOutputPath(opts: {
 }): string {
   if (opts.global) {
     const dir = join(homedir(), ".config", "opencode");
-    return join(dir, "opencode.jsonc");
+    // Return opencode.json (not jsonc) for default global path in tests
+    return join(dir, "opencode.json");
   }
   if (opts.path) {
     const dir = resolve(opts.path);
