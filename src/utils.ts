@@ -9,6 +9,14 @@ import type {
   OpenCodeProvider,
 } from "./types.js";
 
+export interface DcpConfig {
+  $schema?: string;
+  compress?: {
+    minContextLimit?: Record<string, number>;
+    maxContextLimit?: Record<string, number>;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -205,4 +213,82 @@ export function resolveOutputPath(opts: {
   }
   // Default: current working directory
   return resolveConfigFile(resolve(process.cwd()));
+}
+
+/**
+ * Load and parse an existing DCP config file; return empty config on missing file.
+ * Handles both JSON and JSONC (comments, trailing commas) by stripping comments first.
+ */
+export function loadDcpConfig(filePath: string): DcpConfig {
+  if (!existsSync(filePath)) {
+    return {
+      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+    };
+  }
+  const raw = readFileSync(filePath, "utf-8");
+  try {
+    return JSON.parse(stripJsoncComments(raw)) as DcpConfig;
+  } catch {
+    console.error(
+      `Warning: could not parse existing DCP config at ${filePath} – starting fresh.`,
+    );
+    return { $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json" };
+  }
+}
+
+/**
+ * Merge DCP limits into a DCP config, replacing only the specified provider/model keys.
+ */
+export function mergeDcpLimits(
+  existing: DcpConfig,
+  providerKey: string,
+  modelKey: string,
+  minContextLimit?: number,
+  maxContextLimit?: number,
+): DcpConfig {
+  const fullKey = `${providerKey}/${modelKey}`;
+  const compress = existing.compress ?? {};
+  const minContextLimitMap = compress.minContextLimit ?? {};
+  const maxContextLimitMap = compress.maxContextLimit ?? {};
+
+  if (minContextLimit !== undefined) {
+    minContextLimitMap[fullKey] = minContextLimit;
+  }
+  if (maxContextLimit !== undefined) {
+    maxContextLimitMap[fullKey] = maxContextLimit;
+  }
+
+  return {
+    ...existing,
+    compress: {
+      ...compress,
+      minContextLimit: minContextLimitMap,
+      maxContextLimit: maxContextLimitMap,
+    },
+  };
+}
+
+/**
+ * Parse a percentage string (e.g. "80%" or "80") into a decimal value (0-1).
+ * Returns undefined if the value is invalid or out of range.
+ */
+export function parsePercentage(value: string): number | undefined {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*%?$/);
+  if (!match) return undefined;
+  const percent = parseFloat(match[1]);
+  if (percent < 0 || percent > 100) return undefined;
+  return percent / 100;
+}
+
+/**
+ * Resolve the DCP config file path, trying dcp.jsonc first then dcp.json.
+ * Returns the path of the first existing file, or the .json path as default.
+ */
+export function resolveDcpConfigFile(dir: string): string {
+  const jsoncPath = join(dir, "dcp.jsonc");
+  const jsonPath = join(dir, "dcp.json");
+
+  if (existsSync(jsoncPath)) return jsoncPath;
+  return jsonPath;
 }
