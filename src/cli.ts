@@ -55,6 +55,7 @@ export function createProgram(): Command {
     .option(
       "-r, --reasoning-summary-workaround",
       "Enable the reasoningSummary workaround for reasoning models",
+      false,
     )
     .action(
       async (opts: {

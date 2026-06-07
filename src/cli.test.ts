@@ -171,7 +171,7 @@ describe("createProgram: reasoningSummary workaround", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("always writes options.reasoningSummary=null for reasoning models", async () => {
+  it("does not write reasoningSummary by default", async () => {
     const { readFileSync } = await import("node:fs");
     const program = createProgram();
     program.exitOverride();
@@ -183,6 +183,27 @@ describe("createProgram: reasoningSummary workaround", () => {
       "http://localhost:4000",
       "--path",
       tmpDir,
+    ]);
+
+    const written = JSON.parse(readFileSync(join(tmpDir, "opencode.json"), "utf-8")) as Record<string, unknown>;
+    const providers = written["provider"] as Record<string, { models?: Record<string, { options?: Record<string, unknown> }> }>;
+    const model = providers["litellm"]?.models?.["o1-preview"];
+    expect(model?.options?.["reasoningSummary"]).toBeUndefined();
+  });
+
+  it("writes options.reasoningSummary=null when --reasoning-summary-workaround is enabled", async () => {
+    const { readFileSync } = await import("node:fs");
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--reasoning-summary-workaround",
     ]);
 
     const written = JSON.parse(readFileSync(join(tmpDir, "opencode.json"), "utf-8")) as Record<string, unknown>;
