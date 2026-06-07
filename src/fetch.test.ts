@@ -20,7 +20,7 @@ describe("fetchModels", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ object: "list", data: [] }),
-    } as Response);
+    } as unknown as Response);
 
     await fetchModels("http://localhost:4000");
     expect(mockFetch).toHaveBeenCalledWith(
@@ -34,7 +34,7 @@ describe("fetchModels", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ object: "list", data: [] }),
-    } as Response);
+    } as unknown as Response);
 
     await fetchModels("http://localhost:4000/");
     expect(mockFetch).toHaveBeenCalledWith(
@@ -48,7 +48,7 @@ describe("fetchModels", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ object: "list", data: [] }),
-    } as Response);
+    } as unknown as Response);
 
     await fetchModels("http://localhost:4000", "sk-secret");
     expect(mockFetch).toHaveBeenCalledWith(
@@ -65,7 +65,7 @@ describe("fetchModels", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ object: "list", data: models }),
-    } as Response);
+    } as unknown as Response);
 
     const result = await fetchModels("http://localhost:4000");
     expect(result).toEqual(models);
@@ -77,7 +77,7 @@ describe("fetchModels", () => {
       ok: false,
       status: 401,
       statusText: "Unauthorized",
-    } as Response);
+    } as unknown as Response);
 
     await expect(fetchModels("http://localhost:4000")).rejects.toThrow("HTTP 401");
   });
@@ -87,7 +87,7 @@ describe("fetchModels", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ object: "list", data: "not-an-array" }),
-    } as Response);
+    } as unknown as Response);
 
     await expect(fetchModels("http://localhost:4000")).rejects.toThrow('missing "data" array');
   });
@@ -111,7 +111,7 @@ describe("fetchModelInfo", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ data: [] }),
-    } as Response);
+    } as unknown as Response);
 
     await fetchModelInfo("http://localhost:4000");
     expect(mockFetch).toHaveBeenCalledWith(
@@ -125,7 +125,7 @@ describe("fetchModelInfo", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ data: [] }),
-    } as Response);
+    } as unknown as Response);
 
     await fetchModelInfo("http://localhost:4000/");
     expect(mockFetch).toHaveBeenCalledWith(
@@ -139,7 +139,7 @@ describe("fetchModelInfo", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ data: [] }),
-    } as Response);
+    } as unknown as Response);
 
     await fetchModelInfo("http://localhost:4000", "sk-secret");
     expect(mockFetch).toHaveBeenCalledWith(
@@ -156,7 +156,7 @@ describe("fetchModelInfo", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ data: entries }),
-    } as Response);
+    } as unknown as Response);
 
     const result = await fetchModelInfo("http://localhost:4000");
     expect(result).toEqual(entries);
@@ -168,7 +168,7 @@ describe("fetchModelInfo", () => {
       ok: false,
       status: 500,
       statusText: "Internal Server Error",
-    } as Response);
+    } as unknown as Response);
 
     const result = await fetchModelInfo("http://localhost:4000");
     expect(result).toEqual([]);
@@ -179,7 +179,7 @@ describe("fetchModelInfo", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ data: "not-an-array" }),
-    } as Response);
+    } as unknown as Response);
 
     const result = await fetchModelInfo("http://localhost:4000");
     expect(result).toEqual([]);
@@ -205,7 +205,7 @@ describe("testModel", () => {
       ok: true,
       status: 200,
       json: async () => ({ id: "test-1", choices: [{ message: { content: "ok" } }] }),
-    } as Response);
+    } as unknown as Response);
 
     await testModel("http://localhost:4000", "gpt-4o-mini");
 
@@ -228,7 +228,7 @@ describe("testModel", () => {
       ok: true,
       status: 200,
       json: async () => ({ id: "test-1", choices: [] }),
-    } as Response);
+    } as unknown as Response);
 
     await testModel("http://localhost:4000", "gpt-4o-mini", "sk-test");
 
@@ -246,7 +246,7 @@ describe("testModel", () => {
       ok: true,
       status: 200,
       json: async () => ({ id: "test-1", choices: [] }),
-    } as Response);
+    } as unknown as Response);
 
     await testModel("http://localhost:4000/", "gpt-4o-mini");
 
@@ -262,7 +262,7 @@ describe("testModel", () => {
       ok: true,
       status: 200,
       json: async () => ({ id: "test-1", choices: [{ message: { content: "ok" } }] }),
-    } as Response);
+    } as unknown as Response);
 
     const result = await testModel("http://localhost:4000", "gpt-4o-mini");
     expect(result).toEqual({ ok: true });
@@ -275,7 +275,7 @@ describe("testModel", () => {
       status: 400,
       statusText: "Bad Request",
       json: async () => ({ error: { message: "Model not found" } }),
-    } as Response);
+    } as unknown as Response);
 
     const result = await testModel("http://localhost:4000", "nonexistent-model");
     expect(result).toEqual({ ok: false, error: "Model not found" });
@@ -288,7 +288,7 @@ describe("testModel", () => {
       status: 503,
       statusText: "Service Unavailable",
       json: async () => { throw new Error("not json"); },
-    } as Response);
+    } as unknown as Response);
 
     const result = await testModel("http://localhost:4000", "gpt-4o-mini");
     expect(result).toEqual({ ok: false, error: "HTTP 503 Service Unavailable" });
