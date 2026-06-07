@@ -43,6 +43,7 @@ export function buildProviderConfig(
     const info = infoMap.get(id) ?? infoMap.get(key);
     const params = paramsMap.get(id) ?? paramsMap.get(key);
     const modelEntry: OpenCodeModelEntry = {
+      name: "",
       ...(key !== id ? { id } : {}),
     };
 
@@ -150,6 +151,10 @@ export function buildProviderConfig(
     modelsMap[key] = modelEntry;
   }
 
+  const sortedModelsByName = Object.fromEntries(
+    Object.entries(modelsMap).sort(([, a], [, b]) => (a.name ?? "").localeCompare(b.name ?? "", "en", { numeric: true })),
+  );
+
   const provider: OpenCodeProvider = {
     npm: "@ai-sdk/openai-compatible",
     name: providerName,
@@ -157,7 +162,7 @@ export function buildProviderConfig(
       baseURL: `${baseURL.replace(/\/$/, "")}/v1`,
       ...(apiKey ? { apiKey } : {}),
     },
-    models: modelsMap,
+    models: sortedModelsByName,
   };
 
   return provider;

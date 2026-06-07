@@ -103,7 +103,7 @@ export function mergeProvider(
     ...existing,
     provider: {
       ...(existing.provider ?? {}),
-      [providerKey]: providerValue,
+      [providerKey]: {...(((existing.provider ?? {})[providerKey]) ?? {}), ...providerValue},
     },
   };
 }
@@ -117,7 +117,7 @@ export function resolveOutputPath(opts: {
 }): string {
   if (opts.global) {
     const dir = join(homedir(), ".config", "opencode");
-    return join(dir, "opencode.json");
+    return join(dir, "opencode.jsonc");
   }
   if (opts.path) {
     const dir = resolve(opts.path);
