@@ -10,8 +10,13 @@ import {
   resolveConfigFile,
   loadConfig,
   resolveOutputPath,
+  loadDcpConfig,
+  mergeDcpLimits,
+  parsePercentage,
+  resolveDcpConfigFile,
 } from "./utils.js";
 import type { OpenCodeConfig } from "./types.js";
+import type { DcpConfig } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // toDisplayName
@@ -263,5 +268,222 @@ describe("resolveOutputPath", () => {
   it("returns path inside ~/.config/opencode/ when --global is set", () => {
     const result = resolveOutputPath({ global: true });
     expect(result).toMatch(/\.config[/\\]opencode[/\\]opencode\.(json|jsonc)$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadDcpConfig
+// ---------------------------------------------------------------------------
+
+describe("loadDcpConfig", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "dcp-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns a default DCP config when the file does not exist", () => {
+    const result = loadDcpConfig(join(tmpDir, "nonexistent.json"));
+    expect(result).toEqual({
+      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+    });
+  });
+
+  it("parses a valid JSON DCP config file", () => {
+    const filePath = join(tmpDir, "dcp.json");
+    const data = {
+      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+      compress: {
+        minContextLimit: { "litellm/model1": 8000 },
+        maxContextLimit: { "litellm/model1": 16000 },
+      },
+    };
+    writeFileSync(filePath, JSON.stringify(data), "utf-8");
+    expect(loadDcpConfig(filePath)).toEqual(data);
+  });
+
+  it("parses a JSONC file with comments", () => {
+    const filePath = join(tmpDir, "dcp.jsonc");
+    const content = `{
+  // this is a comment
+  "$schema": "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+  "compress": {
+    "minContextLimit": {
+      "litellm/model1": 8000 // comment after value
+    }
+  },
+}`;
+    writeFileSync(filePath, content, "utf-8");
+    expect(loadDcpConfig(filePath)).toEqual({
+      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+      compress: {
+        minContextLimit: { "litellm/model1": 8000 },
+      },
+    });
+  });
+
+  it("returns a default DCP config on invalid JSONC", () => {
+    const filePath = join(tmpDir, "bad.json");
+    writeFileSync(filePath, "not valid json", "utf-8");
+    const result = loadDcpConfig(filePath);
+    expect(result).toEqual({
+      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeDcpLimits
+// ---------------------------------------------------------------------------
+
+describe("mergeDcpLimits", () => {
+  it("adds new limits to an empty DCP config", () => {
+    const config: DcpConfig = {
+      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+    };
+    const result = mergeDcpLimits(config, "litellm", "model1", 8000, 16000);
+    expect(result.compress).toEqual({
+      minContextLimit: { "litellm/model1": 8000 },
+      maxContextLimit: { "litellm/model1": 16000 },
+    });
+  });
+
+  it("updates existing limits for the same key", () => {
+    const config: DcpConfig = {
+      compress: {
+        minContextLimit: { "litellm/model1": 4000 },
+        maxContextLimit: { "litellm/model1": 8000 },
+      },
+    };
+    const result = mergeDcpLimits(config, "litellm", "model1", 8000, 16000);
+    expect(result.compress).toEqual({
+      minContextLimit: { "litellm/model1": 8000 },
+      maxContextLimit: { "litellm/model1": 16000 },
+    });
+  });
+
+  it("preserves limits for other keys", () => {
+    const config: DcpConfig = {
+      compress: {
+        minContextLimit: { "litellm/model2": 4000 },
+        maxContextLimit: { "litellm/model2": 8000 },
+      },
+    };
+    const result = mergeDcpLimits(config, "litellm", "model1", 8000, 16000);
+    expect(result.compress).toEqual({
+      minContextLimit: { "litellm/model2": 4000, "litellm/model1": 8000 },
+      maxContextLimit: { "litellm/model2": 8000, "litellm/model1": 16000 },
+    });
+  });
+
+  it("handles setting only minContextLimit", () => {
+    const config: DcpConfig = {};
+    const result = mergeDcpLimits(config, "litellm", "model1", 8000);
+    expect(result.compress).toEqual({
+      minContextLimit: { "litellm/model1": 8000 },
+      maxContextLimit: {},
+    });
+  });
+
+  it("handles setting only maxContextLimit", () => {
+    const config: DcpConfig = {};
+    const result = mergeDcpLimits(config, "litellm", "model1", undefined, 16000);
+    expect(result.compress).toEqual({
+      minContextLimit: {},
+      maxContextLimit: { "litellm/model1": 16000 },
+    });
+  });
+
+  it("preserves other top-level keys", () => {
+    const config: DcpConfig & { otherKey?: string } = {
+      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+      otherKey: "value",
+    };
+    const result = mergeDcpLimits(config, "litellm", "model1", 8000, 16000);
+    expect((result as DcpConfig & { otherKey?: string }).otherKey).toBe("value");
+    expect(result.$schema).toBe("https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parsePercentage
+// ---------------------------------------------------------------------------
+
+describe("parsePercentage", () => {
+  it("parses percentage values with % sign", () => {
+    expect(parsePercentage("80%")).toBe(0.8);
+    expect(parsePercentage("50%")).toBe(0.5);
+    expect(parsePercentage("100%")).toBe(1);
+    expect(parsePercentage("0%")).toBe(0);
+  });
+
+  it("parses percentage values without % sign", () => {
+    expect(parsePercentage("80")).toBe(0.8);
+    expect(parsePercentage("50")).toBe(0.5);
+    expect(parsePercentage("100")).toBe(1);
+    expect(parsePercentage("0")).toBe(0);
+  });
+
+  it("handles decimal percentage values", () => {
+    expect(parsePercentage("85.5%")).toBe(0.855);
+    expect(parsePercentage("92.5")).toBe(0.925);
+    expect(parsePercentage("12.34%")).toBe(0.1234);
+  });
+
+  it("handles percentage with trailing spaces", () => {
+    expect(parsePercentage("80% ")).toBe(0.8);
+  });
+
+  it("returns undefined for invalid values", () => {
+    expect(parsePercentage("abc")).toBeUndefined();
+    expect(parsePercentage("101%")).toBeUndefined();
+    expect(parsePercentage("-10%")).toBeUndefined();
+    expect(parsePercentage("")).toBeUndefined();
+    expect(parsePercentage("%")).toBeUndefined();
+    expect(parsePercentage("50.")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveDcpConfigFile
+// ---------------------------------------------------------------------------
+
+describe("resolveDcpConfigFile", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "dcp-resolve-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns dcp.json path when neither file exists", () => {
+    const result = resolveDcpConfigFile(tmpDir);
+    expect(result).toBe(join(tmpDir, "dcp.json"));
+  });
+
+  it("prefers dcp.jsonc when both files exist", () => {
+    writeFileSync(join(tmpDir, "dcp.jsonc"), "{}// with comment", "utf-8");
+    writeFileSync(join(tmpDir, "dcp.json"), "{}", "utf-8");
+    const result = resolveDcpConfigFile(tmpDir);
+    expect(result).toBe(join(tmpDir, "dcp.jsonc"));
+  });
+
+  it("returns dcp.json when only dcp.json exists", () => {
+    writeFileSync(join(tmpDir, "dcp.json"), "{}", "utf-8");
+    const result = resolveDcpConfigFile(tmpDir);
+    expect(result).toBe(join(tmpDir, "dcp.json"));
+  });
+
+  it("returns dcp.jsonc when only dcp.jsonc exists", () => {
+    writeFileSync(join(tmpDir, "dcp.jsonc"), "{}// with comment", "utf-8");
+    const result = resolveDcpConfigFile(tmpDir);
+    expect(result).toBe(join(tmpDir, "dcp.jsonc"));
   });
 });

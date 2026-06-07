@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -254,5 +254,275 @@ describe("createProgram: --global/--path mutual exclusion", () => {
 
     expect(errorSpy).toHaveBeenCalledWith("Error: --global and --path are mutually exclusive.");
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLI: --dcp-min / --dcp-max options
+// ---------------------------------------------------------------------------
+
+describe("createProgram: --dcp-min / --dcp-max options", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    resetSchemaCache();
+    tmpDir = mkdtempSync(join(tmpdir(), "dcp-test-"));
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    vi.stubGlobal("fetch", vi.fn());
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("opencode.ai")) {
+        return { ok: true, json: async () => MOCK_OPENCODE_SCHEMA } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              model_name: "gpt-4o",
+              litellm_params: { model: "gpt-4o" },
+              model_info: { max_tokens: 128000, max_output_tokens: 4096, max_input_tokens: 128000 },
+            },
+            {
+              model_name: "claude-3-5-sonnet",
+              litellm_params: { model: "claude-3-5-sonnet" },
+              model_info: { max_tokens: 200000, max_output_tokens: 8192, max_input_tokens: 200000 },
+            },
+          ],
+        }),
+      } as Response;
+    });
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    logSpy.mockRestore();
+    vi.unstubAllGlobals();
+    resetSchemaCache();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates dcp.json with min/max context limits when --dcp-min and --dcp-max are set", async () => {
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--dcp-min",
+      "80%",
+      "--dcp-max",
+      "90%",
+    ]);
+
+    const dcpPath = join(tmpDir, "dcp.json");
+    const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
+
+    expect(dcpConfig.$schema).toBe("https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json");
+    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(102400);
+    expect(dcpConfig.compress.maxContextLimit["litellm/gpt-4o"]).toBe(115200);
+    expect(dcpConfig.compress.minContextLimit["litellm/claude-3-5-sonnet"]).toBe(160000);
+    expect(dcpConfig.compress.maxContextLimit["litellm/claude-3-5-sonnet"]).toBe(180000);
+  });
+
+  it("handles percentage values without % sign", async () => {
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--dcp-min",
+      "50",
+      "--dcp-max",
+      "75",
+    ]);
+
+    const dcpPath = join(tmpDir, "dcp.json");
+    const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
+
+    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(64000);
+    expect(dcpConfig.compress.maxContextLimit["litellm/gpt-4o"]).toBe(96000);
+  });
+
+  it("handles decimal percentage values", async () => {
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--dcp-min",
+      "85.5%",
+      "--dcp-max",
+      "92.5",
+    ]);
+
+    const dcpPath = join(tmpDir, "dcp.json");
+    const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
+
+    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(109440);
+    expect(dcpConfig.compress.maxContextLimit["litellm/gpt-4o"]).toBe(118400);
+  });
+
+  it("merges with existing DCP config without overwriting other keys", async () => {
+    const existingDcp = {
+      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+      compress: {
+        minContextLimit: { "other/provider": 5000 },
+        maxContextLimit: { "other/provider": 10000 },
+      },
+    };
+    writeFileSync(join(tmpDir, "dcp.json"), JSON.stringify(existingDcp), "utf-8");
+
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--dcp-min",
+      "80%",
+      "--dcp-max",
+      "90%",
+    ]);
+
+    const dcpPath = join(tmpDir, "dcp.json");
+    const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
+
+    expect(dcpConfig.compress.minContextLimit["other/provider"]).toBe(5000);
+    expect(dcpConfig.compress.maxContextLimit["other/provider"]).toBe(10000);
+    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(102400);
+  });
+
+  it("only sets minContextLimit when only --dcp-min is provided", async () => {
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--dcp-min",
+      "80%",
+    ]);
+
+    const dcpPath = join(tmpDir, "dcp.json");
+    const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
+
+    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(102400);
+    expect(dcpConfig.compress.maxContextLimit).toBeUndefined();
+  });
+
+  it("only sets maxContextLimit when only --dcp-max is provided", async () => {
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--dcp-max",
+      "90%",
+    ]);
+
+    const dcpPath = join(tmpDir, "dcp.json");
+    const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
+
+    expect(dcpConfig.compress.maxContextLimit["litellm/gpt-4o"]).toBe(115200);
+    expect(dcpConfig.compress.minContextLimit).toBeUndefined();
+  });
+
+  it("skips models without context limit", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("opencode.ai")) {
+        return { ok: true, json: async () => MOCK_OPENCODE_SCHEMA } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              model_name: "model-without-limits",
+              litellm_params: { model: "model-without-limits" },
+              model_info: {},
+            },
+          ],
+        }),
+      } as Response;
+    });
+
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--dcp-min",
+      "80%",
+      "--dcp-max",
+      "90%",
+    ]);
+
+    const dcpPath = join(tmpDir, "dcp.json");
+    const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
+
+    expect(dcpConfig.compress?.minContextLimit?.["litellm/model-without-limits"]).toBeUndefined();
+    expect(dcpConfig.compress?.maxContextLimit?.["litellm/model-without-limits"]).toBeUndefined();
+  });
+
+  it("works with --dry-run to print DCP config to stdout", async () => {
+    const program = createProgram();
+    program.exitOverride();
+
+    await program.parseAsync([
+      "node",
+      "litellm-to-opencode",
+      "--base-url",
+      "http://localhost:4000",
+      "--path",
+      tmpDir,
+      "--dcp-min",
+      "80%",
+      "--dcp-max",
+      "90%",
+      "--dry-run",
+    ]);
+
+    const calls = logSpy.mock.calls.flat();
+    const dcpOutput = calls.find((c: string) => typeof c === "string" && c.includes("dcp.json"));
+
+    expect(dcpOutput).toBeDefined();
   });
 });

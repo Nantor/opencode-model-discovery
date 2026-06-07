@@ -4,8 +4,9 @@ import { dirname } from "node:path";
 
 import { fetchModelInfo } from "./fetch.js";
 import { buildProviderConfig } from "./provider.js";
-import { loadConfig, mergeProvider, resolveOutputPath } from "./utils.js";
+import { loadConfig, mergeProvider, resolveOutputPath, loadDcpConfig, parsePercentage, resolveDcpConfigFile } from "./utils.js";
 import { validateConfig } from "./schema.js";
+import type { OpenCodeProvider } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -57,6 +58,14 @@ export function createProgram(): Command {
       "Enable the reasoningSummary workaround for reasoning models",
       false,
     )
+    .option(
+      "--dcp-min <percent>",
+      "Minimum context limit percentage for DCP (e.g. 80%)",
+    )
+    .option(
+      "--dcp-max <percent>",
+      "Maximum context limit percentage for DCP (e.g. 80%)",
+    )
     .action(
       async (opts: {
         baseUrl: string;
@@ -68,6 +77,8 @@ export function createProgram(): Command {
         dryRun: boolean;
         detailedModelInfo?: string;
         reasoningSummaryWorkaround: boolean;
+        dcpMin?: string;
+        dcpMax?: string;
       }) => {
         try {
           // 0. Validate mutually exclusive flags before any network work
@@ -112,7 +123,55 @@ export function createProgram(): Command {
           // 5. Validate the merged config against the OpenCode schema
           await validateConfig(merged);
 
-          const output = JSON.stringify(merged, null, 2) + "\n";
+          // 6. Handle DCP config if --dcp-min or --dcp-max is set
+          if (opts.dcpMin || opts.dcpMax) {
+            const dcpMinVal = opts.dcpMin ? parsePercentage(opts.dcpMin) : undefined;
+            const dcpMaxVal = opts.dcpMax ? parsePercentage(opts.dcpMax) : undefined;
+
+            if (dcpMinVal === undefined && dcpMaxVal === undefined) {
+              console.error("Error: Invalid percentage value for --dcp-min or --dcp-max");
+              process.exit(1);
+            }
+
+            const dcpDir = dirname(outputPath);
+            const dcpConfigPath = resolveDcpConfigFile(dcpDir);
+
+            const providerConfig = merged.provider?.[opts.providerId] as OpenCodeProvider;
+            const dcpConfig = loadDcpConfig(dcpConfigPath);
+
+            if (dcpMinVal !== undefined || dcpMaxVal !== undefined) {
+              for (const [modelKey, modelEntry] of Object.entries(providerConfig?.models ?? {})) {
+                const contextInput = modelEntry.limit?.context;
+                if (contextInput === undefined) continue;
+
+                const modelId = modelEntry.id ?? modelKey;
+                const fullKey = `${opts.providerId}/${modelId}`;
+
+                if (dcpMinVal !== undefined) {
+                  dcpConfig.compress = dcpConfig.compress ?? {};
+                  dcpConfig.compress.minContextLimit = dcpConfig.compress.minContextLimit ?? {};
+                  dcpConfig.compress.minContextLimit[fullKey] = dcpMinVal * contextInput;
+                }
+
+                if (dcpMaxVal !== undefined) {
+                  dcpConfig.compress = dcpConfig.compress ?? {};
+                  dcpConfig.compress.maxContextLimit = dcpConfig.compress.maxContextLimit ?? {};
+                  dcpConfig.compress.maxContextLimit[fullKey] = dcpMaxVal * contextInput;
+                }
+              }
+            }
+
+            if (!opts.dryRun) {
+              mkdirSync(dcpDir, { recursive: true });
+              writeFileSync(dcpConfigPath, JSON.stringify(dcpConfig, null, 2), "utf-8");
+              console.log(`\nDCP config written to: ${dcpConfigPath}`);
+            } else {
+              console.log("\n--- Dry run: resulting dcp.json ---\n");
+              console.log(JSON.stringify(dcpConfig, null, 2));
+            }
+          }
+
+          const output = JSON.stringify(merged, null, 2);
 
           if (opts.dryRun) {
             console.log("\n--- Dry run: resulting opencode.json ---\n");
@@ -120,7 +179,7 @@ export function createProgram(): Command {
             return;
           }
 
-          // 6. Write
+          // 7. Write
           mkdirSync(dirname(outputPath), { recursive: true });
           writeFileSync(outputPath, output, "utf-8");
           console.log(`\nConfig written to: ${outputPath}`);
