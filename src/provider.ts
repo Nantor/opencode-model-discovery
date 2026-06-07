@@ -18,6 +18,7 @@ export function buildProviderConfig(
   baseURL: string,
   apiKey?: string,
   providerName = "LiteLLM",
+  applyReasoningSummaryWorkaround = true,
 ): OpenCodeProvider {
   // Build lookups from model_name → model_info and model_name → litellm_params
   const infoMap = new Map<string, LiteLLMModelInfo>();
@@ -130,7 +131,7 @@ export function buildProviderConfig(
     // Setting `options.reasoningSummary: null` at the model level tells the AI SDK
     // to omit the field entirely, preventing the 400 error when you cannot change
     // the LiteLLM config yourself.
-    if (modelEntry.reasoning === true) {
+    if (applyReasoningSummaryWorkaround && modelEntry.reasoning === true) {
       modelEntry.options = { ...modelEntry.options, reasoningSummary: null };
     }
 
