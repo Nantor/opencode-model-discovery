@@ -134,7 +134,7 @@ export function createProgram(): Command {
             const providerConfig = merged.provider?.[opts.providerId] as OpenCodeProvider;
             const dcpConfig = loadDcpConfig(dcpConfigPath);
 
-            if (dcpMinVal !== undefined || dcpMaxVal !== undefined) {
+             if (dcpMinVal !== undefined || dcpMaxVal !== undefined) {
               for (const [modelKey, modelEntry] of Object.entries(providerConfig?.models ?? {})) {
                 const contextInput = modelEntry.limit?.context;
                 if (contextInput === undefined) continue;
@@ -144,14 +144,14 @@ export function createProgram(): Command {
 
                 if (dcpMinVal !== undefined) {
                   dcpConfig.compress = dcpConfig.compress ?? {};
-                  dcpConfig.compress.minContextLimit = dcpConfig.compress.minContextLimit ?? {};
-                  dcpConfig.compress.minContextLimit[fullKey] = dcpMinVal * contextInput;
+                  dcpConfig.compress.modelMinLimits = dcpConfig.compress.modelMinLimits ?? {};
+                  dcpConfig.compress.modelMinLimits[fullKey] = Math.ceil(dcpMinVal * contextInput);
                 }
 
                 if (dcpMaxVal !== undefined) {
                   dcpConfig.compress = dcpConfig.compress ?? {};
-                  dcpConfig.compress.maxContextLimit = dcpConfig.compress.maxContextLimit ?? {};
-                  dcpConfig.compress.maxContextLimit[fullKey] = dcpMaxVal * contextInput;
+                  dcpConfig.compress.modelMaxLimits = dcpConfig.compress.modelMaxLimits ?? {};
+                  dcpConfig.compress.modelMaxLimits[fullKey] = Math.ceil(dcpMaxVal * contextInput);
                 }
               }
             }

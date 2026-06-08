@@ -12,8 +12,8 @@ import type {
 export interface DcpConfig {
   $schema?: string;
   compress?: {
-    minContextLimit?: Record<string, number>;
-    maxContextLimit?: Record<string, number>;
+    modelMinLimits?: Record<string, number>;
+    modelMaxLimits?: Record<string, number>;
   };
 }
 
@@ -84,7 +84,7 @@ function stripJsoncComments(input: string): string {
       let str = '"';
       i++;
       while (i < input.length && input[i] !== '"') {
-        if (input[i] === '\\') {
+        if (input[i] === "\\") {
           str += input[i];
           i++;
           if (i < input.length) {
@@ -101,13 +101,14 @@ function stripJsoncComments(input: string): string {
         i++;
       }
       result += str;
-    } else if (input[i] === '/' && input[i + 1] === '/') {
+    } else if (input[i] === "/" && input[i + 1] === "/") {
       // skip single-line comment
-      while (i < input.length && input[i] !== '\n') i++;
-    } else if (input[i] === '/' && input[i + 1] === '*') {
+      while (i < input.length && input[i] !== "\n") i++;
+    } else if (input[i] === "/" && input[i + 1] === "*") {
       // skip multi-line comment
       i += 2;
-      while (i < input.length && !(input[i] === '*' && input[i + 1] === '/')) i++;
+      while (i < input.length && !(input[i] === "*" && input[i + 1] === "/"))
+        i++;
       i += 2; // skip */
     } else {
       result += input[i];
@@ -119,11 +120,11 @@ function stripJsoncComments(input: string): string {
   let output = "";
   i = 0;
   while (i < result.length) {
-    if (result[i] === ',') {
+    if (result[i] === ",") {
       // look ahead past whitespace for ] or }
       let j = i + 1;
       while (j < result.length && /\s/.test(result[j])) j++;
-      if (result[j] === ']' || result[j] === '}') {
+      if (result[j] === "]" || result[j] === "}") {
         // trailing comma — skip it
         i++;
         continue;
@@ -190,7 +191,10 @@ export function mergeProvider(
     ...existing,
     provider: {
       ...(existing.provider ?? {}),
-      [providerKey]: {...(((existing.provider ?? {})[providerKey]) ?? {}), ...providerValue},
+      [providerKey]: {
+        ...((existing.provider ?? {})[providerKey] ?? {}),
+        ...providerValue,
+      },
     },
   };
 }
@@ -222,7 +226,8 @@ export function resolveOutputPath(opts: {
 export function loadDcpConfig(filePath: string): DcpConfig {
   if (!existsSync(filePath)) {
     return {
-      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+      $schema:
+        "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
     };
   }
   const raw = readFileSync(filePath, "utf-8");
@@ -232,11 +237,12 @@ export function loadDcpConfig(filePath: string): DcpConfig {
     console.error(
       `Warning: could not parse existing DCP config at ${filePath} – starting fresh.`,
     );
-    return { $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json" };
+    return {
+      $schema:
+        "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+    };
   }
 }
-
-
 
 /**
  * Parse a percentage string (e.g. "80%" or "80") into a decimal value (0-1).

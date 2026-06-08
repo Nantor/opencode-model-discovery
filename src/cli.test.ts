@@ -327,10 +327,10 @@ describe("createProgram: --dcp-min / --dcp-max options", () => {
     const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
 
     expect(dcpConfig.$schema).toBe("https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json");
-    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(102400);
-    expect(dcpConfig.compress.maxContextLimit["litellm/gpt-4o"]).toBe(115200);
-    expect(dcpConfig.compress.minContextLimit["litellm/claude-3-5-sonnet"]).toBe(160000);
-    expect(dcpConfig.compress.maxContextLimit["litellm/claude-3-5-sonnet"]).toBe(180000);
+    expect(dcpConfig.compress.modelMinLimits["litellm/gpt-4o"]).toBe(102400);
+    expect(dcpConfig.compress.modelMaxLimits["litellm/gpt-4o"]).toBe(115200);
+    expect(dcpConfig.compress.modelMinLimits["litellm/claude-3-5-sonnet"]).toBe(160000);
+    expect(dcpConfig.compress.modelMaxLimits["litellm/claude-3-5-sonnet"]).toBe(180000);
   });
 
   it("handles percentage values without % sign", async () => {
@@ -353,8 +353,8 @@ describe("createProgram: --dcp-min / --dcp-max options", () => {
     const dcpPath = join(tmpDir, "dcp.json");
     const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
 
-    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(64000);
-    expect(dcpConfig.compress.maxContextLimit["litellm/gpt-4o"]).toBe(96000);
+    expect(dcpConfig.compress.modelMinLimits["litellm/gpt-4o"]).toBe(64000);
+    expect(dcpConfig.compress.modelMaxLimits["litellm/gpt-4o"]).toBe(96000);
   });
 
   it("handles decimal percentage values", async () => {
@@ -377,16 +377,16 @@ describe("createProgram: --dcp-min / --dcp-max options", () => {
     const dcpPath = join(tmpDir, "dcp.json");
     const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
 
-    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(109440);
-    expect(dcpConfig.compress.maxContextLimit["litellm/gpt-4o"]).toBe(118400);
+    expect(dcpConfig.compress.modelMinLimits["litellm/gpt-4o"]).toBe(109440);
+    expect(dcpConfig.compress.modelMaxLimits["litellm/gpt-4o"]).toBe(118400);
   });
 
   it("merges with existing DCP config without overwriting other keys", async () => {
     const existingDcp = {
       $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
       compress: {
-        minContextLimit: { "other/provider": 5000 },
-        maxContextLimit: { "other/provider": 10000 },
+        modelMinLimits: { "other/provider": 5000 },
+        modelMaxLimits: { "other/provider": 10000 },
       },
     };
     writeFileSync(join(tmpDir, "dcp.json"), JSON.stringify(existingDcp), "utf-8");
@@ -410,9 +410,9 @@ describe("createProgram: --dcp-min / --dcp-max options", () => {
     const dcpPath = join(tmpDir, "dcp.json");
     const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
 
-    expect(dcpConfig.compress.minContextLimit["other/provider"]).toBe(5000);
-    expect(dcpConfig.compress.maxContextLimit["other/provider"]).toBe(10000);
-    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(102400);
+    expect(dcpConfig.compress.modelMinLimits["other/provider"]).toBe(5000);
+    expect(dcpConfig.compress.modelMaxLimits["other/provider"]).toBe(10000);
+    expect(dcpConfig.compress.modelMinLimits["litellm/gpt-4o"]).toBe(102400);
   });
 
   it("only sets minContextLimit when only --dcp-min is provided", async () => {
@@ -433,8 +433,8 @@ describe("createProgram: --dcp-min / --dcp-max options", () => {
     const dcpPath = join(tmpDir, "dcp.json");
     const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
 
-    expect(dcpConfig.compress.minContextLimit["litellm/gpt-4o"]).toBe(102400);
-    expect(dcpConfig.compress.maxContextLimit).toBeUndefined();
+    expect(dcpConfig.compress.modelMinLimits["litellm/gpt-4o"]).toBe(102400);
+    expect(dcpConfig.compress.modelMaxLimits).toBeUndefined();
   });
 
   it("only sets maxContextLimit when only --dcp-max is provided", async () => {
@@ -455,8 +455,8 @@ describe("createProgram: --dcp-min / --dcp-max options", () => {
     const dcpPath = join(tmpDir, "dcp.json");
     const dcpConfig = JSON.parse(readFileSync(dcpPath, "utf-8"));
 
-    expect(dcpConfig.compress.maxContextLimit["litellm/gpt-4o"]).toBe(115200);
-    expect(dcpConfig.compress.minContextLimit).toBeUndefined();
+    expect(dcpConfig.compress.modelMaxLimits["litellm/gpt-4o"]).toBe(115200);
+    expect(dcpConfig.compress.modelMinLimits).toBeUndefined();
   });
 
   it("skips models without context limit", async () => {
