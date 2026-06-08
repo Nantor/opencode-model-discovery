@@ -100,11 +100,6 @@ export function createProgram(): Command {
             opts.reasoningSummaryWorkaround,
           );
 
-          // 2.b test all models
-          // for (const [key, model] of Object.entries(providerConfig?.models || {})) {
-          //       const testResult = await testModel(opts.baseUrl, model.id ?? key, opts.apiKey);
-          //       console.log(model.name + ": " + (testResult.ok ? "OK" : `FAIL (${testResult.error})`));
-          // }
 
           // 3. Resolve output path
           const outputPath = resolveOutputPath({

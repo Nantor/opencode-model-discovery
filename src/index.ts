@@ -17,11 +17,11 @@ import { runCLI } from "./cli.js";
 // ---------------------------------------------------------------------------
 
 export type { OpenCodeConfig } from "./types.js";
-export { toDisplayName, sanitizeKey, resolveConfigFile, loadConfig, mergeProvider, resolveOutputPath, loadDcpConfig, mergeDcpLimits, parsePercentage, resolveDcpConfigFile } from "./utils.js";
-export { fetchModels, fetchModelInfo, testModel } from "./fetch.js";
+export { toDisplayName, sanitizeKey, resolveConfigFile, loadConfig, mergeProvider, resolveOutputPath, loadDcpConfig, parsePercentage, resolveDcpConfigFile } from "./utils.js";
+export { fetchModelInfo } from "./fetch.js";
 export { buildProviderConfig } from "./provider.js";
-export { validateConfig, getOpenCodeConfigSchema, resetSchemaCache } from "./schema.js";
-export { createProgram } from "./cli.js";
+export { validateConfig, resetSchemaCache } from "./schema.js";
+export { runCLI } from "./cli.js";
 
 // ---------------------------------------------------------------------------
 // CLI entry

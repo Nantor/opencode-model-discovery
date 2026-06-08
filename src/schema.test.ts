@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { validateConfig, getOpenCodeConfigSchema, resetSchemaCache } from "./schema.js";
+import { validateConfig, resetSchemaCache } from "./schema.js";
 import { buildProviderConfig } from "./provider.js";
 import { mergeProvider } from "./utils.js";
 
@@ -147,22 +147,6 @@ describe("validateConfig", () => {
   it("accepts valid logLevel values", async () => {
     for (const level of ["DEBUG", "INFO", "WARN", "ERROR"]) {
       await expect(validateConfig({ logLevel: level })).resolves.toBeUndefined();
-    }
-  });
-
-  it("getOpenCodeConfigSchema().safeParse returns success:true for valid input", async () => {
-    const schema = await getOpenCodeConfigSchema();
-    const result = schema.safeParse({ $schema: "https://opencode.ai/config.json" });
-    expect(result.success).toBe(true);
-  });
-
-  it("getOpenCodeConfigSchema().safeParse returns success:false and error details for invalid input", async () => {
-    const schema = await getOpenCodeConfigSchema();
-    const result = schema.safeParse({ logLevel: "TRACE" });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues.length).toBeGreaterThan(0);
-      expect(result.error.issues[0].path).toContain("logLevel");
     }
   });
 });
