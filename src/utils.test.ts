@@ -11,12 +11,10 @@ import {
   loadConfig,
   resolveOutputPath,
   loadDcpConfig,
-  mergeDcpLimits,
   parsePercentage,
   resolveDcpConfigFile,
 } from "./utils.js";
 import type { OpenCodeConfig } from "./types.js";
-import type { DcpConfig } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // toDisplayName
@@ -333,79 +331,6 @@ describe("loadDcpConfig", () => {
     expect(result).toEqual({
       $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// mergeDcpLimits
-// ---------------------------------------------------------------------------
-
-describe("mergeDcpLimits", () => {
-  it("adds new limits to an empty DCP config", () => {
-    const config: DcpConfig = {
-      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
-    };
-    const result = mergeDcpLimits(config, "litellm", "model1", 8000, 16000);
-    expect(result.compress).toEqual({
-      minContextLimit: { "litellm/model1": 8000 },
-      maxContextLimit: { "litellm/model1": 16000 },
-    });
-  });
-
-  it("updates existing limits for the same key", () => {
-    const config: DcpConfig = {
-      compress: {
-        minContextLimit: { "litellm/model1": 4000 },
-        maxContextLimit: { "litellm/model1": 8000 },
-      },
-    };
-    const result = mergeDcpLimits(config, "litellm", "model1", 8000, 16000);
-    expect(result.compress).toEqual({
-      minContextLimit: { "litellm/model1": 8000 },
-      maxContextLimit: { "litellm/model1": 16000 },
-    });
-  });
-
-  it("preserves limits for other keys", () => {
-    const config: DcpConfig = {
-      compress: {
-        minContextLimit: { "litellm/model2": 4000 },
-        maxContextLimit: { "litellm/model2": 8000 },
-      },
-    };
-    const result = mergeDcpLimits(config, "litellm", "model1", 8000, 16000);
-    expect(result.compress).toEqual({
-      minContextLimit: { "litellm/model2": 4000, "litellm/model1": 8000 },
-      maxContextLimit: { "litellm/model2": 8000, "litellm/model1": 16000 },
-    });
-  });
-
-  it("handles setting only minContextLimit", () => {
-    const config: DcpConfig = {};
-    const result = mergeDcpLimits(config, "litellm", "model1", 8000);
-    expect(result.compress).toEqual({
-      minContextLimit: { "litellm/model1": 8000 },
-      maxContextLimit: {},
-    });
-  });
-
-  it("handles setting only maxContextLimit", () => {
-    const config: DcpConfig = {};
-    const result = mergeDcpLimits(config, "litellm", "model1", undefined, 16000);
-    expect(result.compress).toEqual({
-      minContextLimit: {},
-      maxContextLimit: { "litellm/model1": 16000 },
-    });
-  });
-
-  it("preserves other top-level keys", () => {
-    const config: DcpConfig & { otherKey?: string } = {
-      $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
-      otherKey: "value",
-    };
-    const result = mergeDcpLimits(config, "litellm", "model1", 8000, 16000);
-    expect((result as DcpConfig & { otherKey?: string }).otherKey).toBe("value");
-    expect(result.$schema).toBe("https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json");
   });
 });
 

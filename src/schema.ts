@@ -96,8 +96,3 @@ export async function validateConfig(config: unknown): Promise<void> {
  * Returns the compiled Zod schema for the OpenCode config.
  * Fetches and caches on first call.
  */
-export async function getOpenCodeConfigSchema(): Promise<
-  ReturnType<typeof z.fromJSONSchema>
-> {
-  return loadOpenCodeSchema();
-}

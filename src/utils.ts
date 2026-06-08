@@ -236,37 +236,7 @@ export function loadDcpConfig(filePath: string): DcpConfig {
   }
 }
 
-/**
- * Merge DCP limits into a DCP config, replacing only the specified provider/model keys.
- */
-export function mergeDcpLimits(
-  existing: DcpConfig,
-  providerKey: string,
-  modelKey: string,
-  minContextLimit?: number,
-  maxContextLimit?: number,
-): DcpConfig {
-  const fullKey = `${providerKey}/${modelKey}`;
-  const compress = existing.compress ?? {};
-  const minContextLimitMap = compress.minContextLimit ?? {};
-  const maxContextLimitMap = compress.maxContextLimit ?? {};
 
-  if (minContextLimit !== undefined) {
-    minContextLimitMap[fullKey] = minContextLimit;
-  }
-  if (maxContextLimit !== undefined) {
-    maxContextLimitMap[fullKey] = maxContextLimit;
-  }
-
-  return {
-    ...existing,
-    compress: {
-      ...compress,
-      minContextLimit: minContextLimitMap,
-      maxContextLimit: maxContextLimitMap,
-    },
-  };
-}
 
 /**
  * Parse a percentage string (e.g. "80%" or "80") into a decimal value (0-1).

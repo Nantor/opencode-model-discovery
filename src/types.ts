@@ -19,44 +19,7 @@ export function toNum(v: unknown): number | undefined {
   return undefined;
 }
 
-/** Convert all `number` fields on LiteLLMModelInfo to `number | string`. */
-export function normalizeModelInfo(info: Record<string, unknown> | undefined): LiteLLMModelInfo | undefined {
-  if (!info) return undefined;
-  const numFields = [
-    "cache_creation_input_token_cost",
-    "cache_creation_input_token_cost_above_1hr",
-    "cache_read_input_token_cost",
-    "output_cost_per_token",
-    "max_tokens",
-    "max_input_tokens",
-    "max_output_tokens",
-    "input_cost_per_token_priority",
-    "cache_creation_input_token_cost_above_200k_tokens",
-    "cache_read_input_token_cost_above_200k_tokens",
-    "cache_read_input_token_cost_above_272k_tokens",
-    "cache_read_input_token_cost_priority",
-    "input_cost_per_token_above_200k_tokens",
-    "input_cost_per_token_above_272k_tokens",
-    "input_cost_per_audio_token",
-    "input_cost_per_token_batches",
-    "output_cost_per_token_batches",
-    "output_cost_per_token_priority",
-    "output_cost_per_reasoning_token",
-    "output_cost_per_token_above_200k_tokens",
-    "output_cost_per_token_above_272k_tokens",
-    "output_cost_per_image",
-    "output_vector_size",
-  ];
-  const result: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(info)) {
-    if (numFields.includes(k)) {
-      result[k] = toNum(v);
-    } else {
-      result[k] = v;
-    }
-  }
-  return result as unknown as LiteLLMModelInfo;
-}
+
 
 export type LiteLLMModelInfo = {
   id?: string;
