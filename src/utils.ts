@@ -268,3 +268,26 @@ export function resolveDcpConfigFile(dir: string): string {
   if (existsSync(jsoncPath)) return jsoncPath;
   return jsonPath;
 }
+
+/**
+ * Sort an object's keys alphabetically and return a new object with sorted property keys.
+ */
+export function sortObjectKeys<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }))) as T;
+}
+
+/**
+ * Sort an object's keys alphabetically by a given string key in the nested objects.
+ */
+export function sortByKey<T extends Record<string, unknown>>(
+  obj: T,
+  key: keyof T[keyof T] & string,
+): T {
+  return Object.fromEntries(Object.entries(obj).sort(([, a], [, b]) => {
+    const aVal = a && typeof a === "object" && key in a ? (a as Record<string, unknown>)[key] : "";
+    const bVal = b && typeof b === "object" && key in b ? (b as Record<string, unknown>)[key] : "";
+    const aStr = String(aVal);
+    const bStr = String(bVal);
+    return aStr.localeCompare(bStr, 'en', { numeric: true });
+  })) as T;
+}

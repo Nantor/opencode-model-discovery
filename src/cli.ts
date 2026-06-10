@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 
 import { fetchModelInfo } from "./fetch.js";
 import { buildProviderConfig } from "./provider.js";
-import { loadConfig, mergeProvider, resolveOutputPath, loadDcpConfig, parsePercentage, resolveDcpConfigFile } from "./utils.js";
+import { loadConfig, mergeProvider, resolveOutputPath, loadDcpConfig, parsePercentage, resolveDcpConfigFile, sortObjectKeys } from "./utils.js";
 import { validateConfig } from "./schema.js";
 import type { OpenCodeProvider } from "./types.js";
 
@@ -153,6 +153,11 @@ export function createProgram(): Command {
                   dcpConfig.compress.modelMaxLimits = dcpConfig.compress.modelMaxLimits ?? {};
                   dcpConfig.compress.modelMaxLimits[fullKey] = Math.ceil(dcpMaxVal * contextInput);
                 }
+                dcpConfig.compress ||= {};
+                dcpConfig.compress.modelMinLimits ||= {};
+                dcpConfig.compress.modelMaxLimits ||= {};
+                dcpConfig.compress.modelMinLimits = sortObjectKeys(dcpConfig.compress?.modelMinLimits ?? {});
+                dcpConfig.compress.modelMaxLimits = sortObjectKeys(dcpConfig.compress?.modelMaxLimits ?? {});
               }
             }
 
