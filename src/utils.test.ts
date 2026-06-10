@@ -13,6 +13,8 @@ import {
   loadDcpConfig,
   parsePercentage,
   resolveDcpConfigFile,
+  sortObjectKeys,
+  sortByKey,
 } from "./utils.js";
 import type { OpenCodeConfig } from "./types.js";
 
@@ -410,5 +412,109 @@ describe("resolveDcpConfigFile", () => {
     writeFileSync(join(tmpDir, "dcp.jsonc"), "{}// with comment", "utf-8");
     const result = resolveDcpConfigFile(tmpDir);
     expect(result).toBe(join(tmpDir, "dcp.jsonc"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sortObjectKeys
+// ---------------------------------------------------------------------------
+
+describe("sortObjectKeys", () => {
+  it("sorts simple object keys alphabetically", () => {
+    const input = { z: 1, a: 2, m: 3 };
+    const result = sortObjectKeys(input);
+    expect(Object.keys(result)).toEqual(["a", "m", "z"]);
+    expect(result).toEqual({ a: 2, m: 3, z: 1 });
+  });
+
+  it("handles empty object", () => {
+    const result = sortObjectKeys({});
+    expect(Object.keys(result)).toEqual([]);
+  });
+
+  it("handles single key object", () => {
+    const result = sortObjectKeys({ only: 1 });
+    expect(Object.keys(result)).toEqual(["only"]);
+  });
+
+  it("sorts keys with numbers using natural order", () => {
+    const input = { item10: 1, item2: 2, item1: 3 };
+    const result = sortObjectKeys(input);
+    expect(Object.keys(result)).toEqual(["item1", "item2", "item10"]);
+  });
+
+  it("preserves values while sorting keys", () => {
+    const input = { z: { nested: "value" }, a: [1, 2, 3] };
+    const result = sortObjectKeys(input);
+    expect(Object.keys(result)).toEqual(["a", "z"]);
+    expect(result.a).toEqual([1, 2, 3]);
+    expect(result.z).toEqual({ nested: "value" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sortByKey
+// ---------------------------------------------------------------------------
+
+describe("sortByKey", () => {
+  it("sorts object by nested string key", () => {
+    const input = {
+      z: { name: "Zebra" },
+      a: { name: "Apple" },
+      m: { name: "Monkey" },
+    };
+    const result = sortByKey(input, "name");
+    expect(Object.keys(result)).toEqual(["a", "m", "z"]);
+  });
+
+  it("handles empty object", () => {
+    const result = sortByKey({}, "name");
+    expect(Object.keys(result)).toEqual([]);
+  });
+
+  it("handles single key object", () => {
+    const input = { only: { name: "Only" } };
+    const result = sortByKey(input, "name");
+    expect(Object.keys(result)).toEqual(["only"]);
+  });
+
+  it("sorts numerically when values are numbers", () => {
+    const input = {
+      z: { value: 10 },
+      a: { value: 2 },
+      m: { value: 1 },
+    };
+    const result = sortByKey(input, "value");
+    expect(Object.keys(result)).toEqual(["m", "a", "z"]);
+  });
+
+  it("uses empty string fallback for missing keys", () => {
+    const input = {
+      a: { name: "Apple" },
+      z: {},
+      m: { name: "Monkey" },
+    };
+    const result = sortByKey(input, "name");
+    expect(Object.keys(result)).toEqual(["z", "a", "m"]);
+  });
+
+  it("handles mixed types in sort key", () => {
+    const input = {
+      a: { value: "abc" },
+      z: { value: 123 },
+      m: { value: "def" },
+    };
+    const result = sortByKey(input, "value");
+    expect(Object.keys(result)).toEqual(["z", "a", "m"]);
+  });
+
+  it("preserves full nested objects while sorting", () => {
+    const input = {
+      z: { name: "Zebra", type: "animal" },
+      a: { name: "Apple", type: "fruit" },
+    };
+    const result = sortByKey(input, "name");
+    expect(result.a).toEqual({ name: "Apple", type: "fruit" });
+    expect(result.z).toEqual({ name: "Zebra", type: "animal" });
   });
 });
