@@ -6,7 +6,7 @@ import type {
   OpenCodeModelEntry,
   OpenCodeProvider,
 } from "./types.js";
-import { sanitizeKey, toDisplayName } from "./utils.js";
+import { sanitizeKey, sortByKey, toDisplayName } from "./utils.js";
 import { toNum } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -29,7 +29,10 @@ export function buildProviderConfig(
     // Also index by litellm_params.model if it differs and the key is not
     // already present — avoids silently overwriting the primary model_name entry
     // when both keys happen to be equal or collide after sanitisation.
-    if (entry.litellm_params?.model && !infoMap.has(entry.litellm_params.model)) {
+    if (
+      entry.litellm_params?.model &&
+      !infoMap.has(entry.litellm_params.model)
+    ) {
       infoMap.set(entry.litellm_params.model, entry.model_info);
       paramsMap.set(entry.litellm_params.model, entry.litellm_params);
     }
@@ -55,7 +58,10 @@ export function buildProviderConfig(
       const outputTokens = toNum(info.max_output_tokens);
 
       if (contextTokens !== undefined && outputTokens !== undefined) {
-        const limit: { context: number; output: number; input?: number } = { context: contextTokens, output: outputTokens };
+        const limit: { context: number; output: number; input?: number } = {
+          context: contextTokens,
+          output: outputTokens,
+        };
         if (inputTokens !== undefined) {
           limit.input = inputTokens;
         }
@@ -63,29 +69,57 @@ export function buildProviderConfig(
       }
 
       // --- cost (per-token pricing in USD) ---
-      const inputCost = toNum(info.input_cost_per_token) !== undefined ? toNum(info.input_cost_per_token!)! * 1_000_000 : undefined;
-      const outputCost = toNum(info.output_cost_per_token) !== undefined ? toNum(info.output_cost_per_token!)! * 1_000_000 : undefined;
+      const inputCost =
+        toNum(info.input_cost_per_token) !== undefined
+          ? toNum(info.input_cost_per_token!)! * 1_000_000
+          : undefined;
+      const outputCost =
+        toNum(info.output_cost_per_token) !== undefined
+          ? toNum(info.output_cost_per_token!)! * 1_000_000
+          : undefined;
 
       if (inputCost !== undefined && outputCost !== undefined) {
-        const cost: OpenCodeModelCost = { input: inputCost, output: outputCost };
+        const cost: OpenCodeModelCost = {
+          input: inputCost,
+          output: outputCost,
+        };
 
         if (toNum(info.cache_read_input_token_cost) !== undefined) {
-          cost.cache_read = toNum(info.cache_read_input_token_cost!)! * 1_000_000;
+          cost.cache_read =
+            toNum(info.cache_read_input_token_cost!)! * 1_000_000;
         }
         if (toNum(info.cache_creation_input_token_cost) !== undefined) {
-          cost.cache_write = toNum(info.cache_creation_input_token_cost!)! * 1_000_000;
+          cost.cache_write =
+            toNum(info.cache_creation_input_token_cost!)! * 1_000_000;
         }
 
         // context_over_200k pricing tiers
-        const inputOver200k = toNum(info.input_cost_per_token_above_200k_tokens);
-        const outputOver200k = toNum(info.output_cost_per_token_above_200k_tokens);
+        const inputOver200k = toNum(
+          info.input_cost_per_token_above_200k_tokens,
+        );
+        const outputOver200k = toNum(
+          info.output_cost_per_token_above_200k_tokens,
+        );
         if (inputOver200k !== undefined && outputOver200k !== undefined) {
-          cost.context_over_200k = { input: inputOver200k * 1_000_000, output: outputOver200k * 1_000_000 };
-          if (toNum(info.cache_read_input_token_cost_above_200k_tokens) !== undefined) {
-            cost.context_over_200k.cache_read = toNum(info.cache_read_input_token_cost_above_200k_tokens!)! * 1_000_000;
+          cost.context_over_200k = {
+            input: inputOver200k * 1_000_000,
+            output: outputOver200k * 1_000_000,
+          };
+          if (
+            toNum(info.cache_read_input_token_cost_above_200k_tokens) !==
+            undefined
+          ) {
+            cost.context_over_200k.cache_read =
+              toNum(info.cache_read_input_token_cost_above_200k_tokens!)! *
+              1_000_000;
           }
-          if (toNum(info.cache_creation_input_token_cost_above_200k_tokens) !== undefined) {
-            cost.context_over_200k.cache_write = toNum(info.cache_creation_input_token_cost_above_200k_tokens!)! * 1_000_000;
+          if (
+            toNum(info.cache_creation_input_token_cost_above_200k_tokens) !==
+            undefined
+          ) {
+            cost.context_over_200k.cache_write =
+              toNum(info.cache_creation_input_token_cost_above_200k_tokens!)! *
+              1_000_000;
           }
         }
 
@@ -93,14 +127,20 @@ export function buildProviderConfig(
       }
 
       // --- reasoning ---
-      if (typeof info.supports_reasoning === "boolean" && info.supports_reasoning) {
+      if (
+        typeof info.supports_reasoning === "boolean" &&
+        info.supports_reasoning
+      ) {
         modelEntry.reasoning = true;
       } else if (typeof info.reasoning === "boolean" && info.reasoning) {
         modelEntry.reasoning = true;
       }
 
       // --- tool_call ---
-      if (info.supports_function_calling === true || info.supports_tool_choice === true) {
+      if (
+        info.supports_function_calling === true ||
+        info.supports_tool_choice === true
+      ) {
         modelEntry.tool_call = true;
       }
 
@@ -110,17 +150,24 @@ export function buildProviderConfig(
       }
 
       // --- modalities ---
-      const inputModalities: Array<"text" | "audio" | "image" | "video" | "pdf"> = ["text"];
+      const inputModalities: Array<
+        "text" | "audio" | "image" | "video" | "pdf"
+      > = ["text"];
       if (info.supports_vision === true) inputModalities.push("image");
       if (info.supports_audio_input === true) inputModalities.push("audio");
       if (info.supports_pdf_input === true) inputModalities.push("pdf");
 
-      const outputModalities: Array<"text" | "audio" | "image" | "video" | "pdf"> = ["text"];
+      const outputModalities: Array<
+        "text" | "audio" | "image" | "video" | "pdf"
+      > = ["text"];
       if (info.supports_audio_output === true) outputModalities.push("audio");
 
       // Only set modalities when we have something beyond the plain text default
       if (inputModalities.length > 1 || outputModalities.length > 1) {
-        modelEntry.modalities = { input: inputModalities, output: outputModalities };
+        modelEntry.modalities = {
+          input: inputModalities,
+          output: outputModalities,
+        };
       }
     }
 
@@ -152,10 +199,6 @@ export function buildProviderConfig(
     modelsMap[key] = modelEntry;
   }
 
-  const sortedModelsByName = Object.fromEntries(
-    Object.entries(modelsMap).sort(([, a], [, b]) => (a.name ?? "").localeCompare(b.name ?? "", "en", { numeric: true })),
-  );
-
   const provider: OpenCodeProvider = {
     npm: "@ai-sdk/openai-compatible",
     name: providerName,
@@ -163,7 +206,7 @@ export function buildProviderConfig(
       baseURL: `${baseURL.replace(/\/$/, "")}/v1`,
       ...(apiKey ? { apiKey } : {}),
     },
-    models: sortedModelsByName,
+    models: sortByKey(modelsMap, "name"),
   };
 
   return provider;
