@@ -4,7 +4,15 @@ import { dirname } from "node:path";
 
 import { fetchModelInfo } from "./fetch.js";
 import { buildProviderConfig } from "./provider.js";
-import { loadConfig, mergeProvider, resolveOutputPath, loadDcpConfig, parsePercentage, resolveDcpConfigFile, sortObjectKeys } from "./utils.js";
+import {
+  loadConfig,
+  mergeProvider,
+  resolveOutputPath,
+  loadDcpConfig,
+  parsePercentage,
+  resolveDcpConfigFile,
+  sortObjectKeys,
+} from "./utils.js";
 import { validateConfig } from "./schema.js";
 import type { OpenCodeProvider } from "./types.js";
 
@@ -43,7 +51,10 @@ export function createProgram(): Command {
       "Write to the global OpenCode config (~/.config/opencode/opencode.json)",
       false,
     )
-    .option("-P, --path <dir>", "Write to opencode.json inside the given directory")
+    .option(
+      "-P, --path <dir>",
+      "Write to opencode.json inside the given directory",
+    )
     .option(
       "-D, --dry-run",
       "Print the resulting config to stdout without writing any file",
@@ -88,7 +99,10 @@ export function createProgram(): Command {
           }
 
           // 1. Fetch
-          const modelInfoEntries = await fetchModelInfo(opts.baseUrl, opts.apiKey);
+          const modelInfoEntries = await fetchModelInfo(
+            opts.baseUrl,
+            opts.apiKey,
+          );
           console.log(`Found ${modelInfoEntries.length} model(s).`);
 
           // 2.a Build provider block
@@ -99,7 +113,6 @@ export function createProgram(): Command {
             opts.providerName,
             opts.reasoningSummaryWorkaround,
           );
-
 
           // 3. Resolve output path
           const outputPath = resolveOutputPath({
@@ -120,22 +133,34 @@ export function createProgram(): Command {
 
           // 6. Handle DCP config if --dcp-min or --dcp-max is set
           if (opts.dcpMin || opts.dcpMax) {
-            const dcpMinVal = opts.dcpMin ? parsePercentage(opts.dcpMin) : undefined;
-            const dcpMaxVal = opts.dcpMax ? parsePercentage(opts.dcpMax) : undefined;
+            const dcpMinVal = opts.dcpMin
+              ? parsePercentage(opts.dcpMin)
+              : undefined;
+            const dcpMaxVal = opts.dcpMax
+              ? parsePercentage(opts.dcpMax)
+              : undefined;
 
             if (dcpMinVal === undefined && dcpMaxVal === undefined) {
-              console.error("Error: Invalid percentage value for --dcp-min or --dcp-max");
+              console.error(
+                "Error: Invalid percentage value for --dcp-min or --dcp-max",
+              );
               process.exit(1);
             }
 
             const dcpDir = dirname(outputPath);
             const dcpConfigPath = resolveDcpConfigFile(dcpDir);
 
-            const providerConfig = merged.provider?.[opts.providerId] as OpenCodeProvider;
+            const providerConfig = merged.provider?.[
+              opts.providerId
+            ] as OpenCodeProvider;
             const dcpConfig = loadDcpConfig(dcpConfigPath);
 
-             if (dcpMinVal !== undefined || dcpMaxVal !== undefined) {
-              for (const [modelKey, modelEntry] of Object.entries(providerConfig?.models ?? {})) {
+            if (dcpMinVal !== undefined || dcpMaxVal !== undefined) {
+              const modelMinLimits: Record<string, number> = {};
+              const modelMaxLimits: Record<string, number> = {};
+              for (const [modelKey, modelEntry] of Object.entries(
+                providerConfig?.models ?? {},
+              )) {
                 const contextInput = modelEntry.limit?.context;
                 if (contextInput === undefined) continue;
 
@@ -143,27 +168,29 @@ export function createProgram(): Command {
                 const fullKey = `${opts.providerId}/${modelId}`;
 
                 if (dcpMinVal !== undefined) {
-                  dcpConfig.compress = dcpConfig.compress ?? {};
-                  dcpConfig.compress.modelMinLimits = dcpConfig.compress.modelMinLimits ?? {};
-                  dcpConfig.compress.modelMinLimits[fullKey] = Math.ceil(dcpMinVal * contextInput);
+                  modelMinLimits[fullKey] = Math.ceil(dcpMinVal * contextInput);
                 }
 
                 if (dcpMaxVal !== undefined) {
-                  dcpConfig.compress = dcpConfig.compress ?? {};
-                  dcpConfig.compress.modelMaxLimits = dcpConfig.compress.modelMaxLimits ?? {};
-                  dcpConfig.compress.modelMaxLimits[fullKey] = Math.ceil(dcpMaxVal * contextInput);
+                  modelMaxLimits[fullKey] = Math.ceil(dcpMaxVal * contextInput);
                 }
-                dcpConfig.compress ||= {};
-                dcpConfig.compress.modelMinLimits ||= {};
-                dcpConfig.compress.modelMaxLimits ||= {};
-                dcpConfig.compress.modelMinLimits = sortObjectKeys(dcpConfig.compress?.modelMinLimits ?? {});
-                dcpConfig.compress.modelMaxLimits = sortObjectKeys(dcpConfig.compress?.modelMaxLimits ?? {});
               }
+              dcpConfig.compress ||= {};
+              dcpConfig.compress.modelMinLimits = sortObjectKeys(
+                modelMinLimits ?? {},
+              );
+              dcpConfig.compress.modelMaxLimits = sortObjectKeys(
+                modelMaxLimits ?? {},
+              );
             }
 
             if (!opts.dryRun) {
               mkdirSync(dcpDir, { recursive: true });
-              writeFileSync(dcpConfigPath, JSON.stringify(dcpConfig, null, 2), "utf-8");
+              writeFileSync(
+                dcpConfigPath,
+                JSON.stringify(dcpConfig, null, 2),
+                "utf-8",
+              );
               console.log(`\nDCP config written to: ${dcpConfigPath}`);
             } else {
               console.log("\n--- Dry run: resulting dcp.json ---\n");

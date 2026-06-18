@@ -48,7 +48,7 @@ export function toDisplayName(
     if (cost.output)
       costParts.push(`${cost.output.toFixed(2).replace(/\.?0+$/, "")}↓`);
     if (costParts.length > 0) {
-      displayName += `(💰 ${costParts.join(" ")})`;
+      displayName += `(${costParts.join(" ")}💲)`;
     }
   }
   if (limit) {
@@ -57,7 +57,7 @@ export function toDisplayName(
     if (limit.context) limitParts.push(`${toShortNum(limit.context)}↻`);
     if (limit.output) limitParts.push(`${toShortNum(limit.output)}↓`);
     if (limitParts.length > 0) {
-      displayName += `[🪙 ${limitParts.join(" ")}]`;
+      displayName += `[${limitParts.join(" ")}📚]`;
     }
   }
   return displayName.trim();
