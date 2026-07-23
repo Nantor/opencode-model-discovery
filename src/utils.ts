@@ -54,8 +54,20 @@ export function toDisplayName(
   if (limit) {
     const limitParts = [];
     if (limit.input) limitParts.push(`${toShortNum(limit.input)}↑`);
-    if (limit.context) limitParts.push(`${toShortNum(limit.context)}↻`);
-    if (limit.output) limitParts.push(`${toShortNum(limit.output)}↓`);
+    // When only one of context/output is set, or both are set but equal,
+    // collapse them into a single output-style entry to avoid redundancy.
+    if (
+      limit.context !== undefined &&
+      limit.output !== undefined &&
+      limit.context !== limit.output
+    ) {
+      limitParts.push(`${toShortNum(limit.context)}↻`);
+      limitParts.push(`${toShortNum(limit.output)}↓`);
+    } else if (limit.output !== undefined) {
+      limitParts.push(`${toShortNum(limit.output)}↓`);
+    } else if (limit.context !== undefined) {
+      limitParts.push(`${toShortNum(limit.context)}↓`);
+    }
     if (limitParts.length > 0) {
       displayName += `[${limitParts.join(" ")}📚]`;
     }
