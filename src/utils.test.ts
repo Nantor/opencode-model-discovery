@@ -46,6 +46,40 @@ describe("toDisplayName", () => {
   it("strips trailing slash when the segment after the slash is empty", () => {
     expect(toDisplayName("openai/")).toBe("Openai");
   });
+
+  it("shows both context and output limits when they differ", () => {
+    expect(
+      toDisplayName("gpt-4o", undefined, { context: 128000, output: 4096 }),
+    ).toBe("Gpt 4o [128K↻ 4.1K↓📚]");
+  });
+
+  it("collapses context and output into a single output entry when equal", () => {
+    expect(
+      toDisplayName("gpt-4o", undefined, { context: 128000, output: 128000 }),
+    ).toBe("Gpt 4o [128K↓📚]");
+  });
+
+  it("uses output formatting when only output limit is present", () => {
+    expect(toDisplayName("gpt-4o", undefined, { output: 4096 })).toBe(
+      "Gpt 4o [4.1K↓📚]",
+    );
+  });
+
+  it("uses output formatting when only context limit is present", () => {
+    expect(toDisplayName("gpt-4o", undefined, { context: 128000 })).toBe(
+      "Gpt 4o [128K↓📚]",
+    );
+  });
+
+  it("includes input limit alongside collapsed context/output", () => {
+    expect(
+      toDisplayName("gpt-4o", undefined, {
+        input: 127000,
+        context: 128000,
+        output: 128000,
+      }),
+    ).toBe("Gpt 4o [127K↑ 128K↓📚]");
+  });
 });
 
 // ---------------------------------------------------------------------------
