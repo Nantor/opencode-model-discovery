@@ -3,20 +3,16 @@
   "version": "1.0.0",
   "description": "OpenCode plugin that discovers models from OpenAI-compatible providers",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/opencode-model-discovery.js",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+    ".": "./dist/opencode-model-discovery.js"
   },
   "files": [
     "dist",
     "README.md"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc",
+    "build": "rimraf dist && tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/opencode-model-discovery.js",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test": "vitest src",
@@ -29,6 +25,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
+    "esbuild": "^0.25.12",
     "eslint": "^10.4.0",
     "rimraf": "^6.1.3",
     "typescript": "^5.5.0",

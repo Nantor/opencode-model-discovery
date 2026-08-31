@@ -5,6 +5,7 @@ import type {
   OpenCodeModelCost,
   OpenCodeModelEntry,
   OpenCodeProvider,
+  Logger,
 } from "./types.js";
 import { sanitizeKey, sortByKey, toDisplayName } from "./utils.js";
 import { toNum } from "./types.js";
@@ -43,6 +44,7 @@ export function buildProviderConfig(
   applyReasoningSummaryWorkaround = true,
   modelNameFormat?: string,
   providerID = "litellm",
+  log?: Logger,
 ): OpenCodeProvider {
   // Build lookups from model_name → model_info and model_name → litellm_params
   const infoMap = new Map<string, LiteLLMModelInfo>();
@@ -215,7 +217,8 @@ export function buildProviderConfig(
     }
 
     if (key in modelsMap) {
-      console.warn(
+      void log?.(
+        "warn",
         `[opencode-model-discovery] Duplicate model key "${key}" (from id "${id}") - previous entry overwritten.`,
       );
     }

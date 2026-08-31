@@ -5,7 +5,7 @@ opencode-model-discovery - OpenCode plugin for discovering models from OpenAI-co
 ## Essential commands
 
 ```
-npm run build        # tsc → dist/
+npm run build        # type-check + bundle -> dist/opencode-model-discovery.js
 npm run lint         # eslint src
 npm run lint:fix     # eslint src --fix
 npm run test         # vitest (watch)
@@ -14,7 +14,7 @@ npm run test:run     # vitest run
 
 ## Architecture
 
-Plugin entrypoint: `src/index.ts`. Hook implementation: `src/plugin.ts`. Build output: `dist/`.
+Plugin entrypoint: `src/index.ts`. Hook implementation: `src/plugin.ts`. Build output: the single bundled file `dist/opencode-model-discovery.js`.
 
 Flow: OpenCode loads the plugin -> the `config` hook finds providers with `options.discovery: true` -> fetches `GET /v1/models` and optional metadata from `GET /v1/model/info` -> merges discovered models into the live provider config. Explicit model entries win.
 
