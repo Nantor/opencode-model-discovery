@@ -71,7 +71,7 @@ describe("fetchModelInfo", () => {
     expect(result).toEqual(entries);
   });
 
-  it("warns and returns empty array on non-OK HTTP status", async () => {
+  it("throws on non-OK HTTP status", async () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch.mockResolvedValue({
       ok: false,
@@ -79,18 +79,20 @@ describe("fetchModelInfo", () => {
       statusText: "Internal Server Error",
     } as unknown as Response);
 
-    const result = await fetchModelInfo("http://localhost:4000");
-    expect(result).toEqual([]);
+    await expect(fetchModelInfo("http://localhost:4000")).rejects.toThrow(
+      "HTTP 500 Internal Server Error",
+    );
   });
 
-  it("warns and returns empty array when data is not an array", async () => {
+  it("throws when data is not an array", async () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ data: "not-an-array" }),
     } as unknown as Response);
 
-    const result = await fetchModelInfo("http://localhost:4000");
-    expect(result).toEqual([]);
+    await expect(fetchModelInfo("http://localhost:4000")).rejects.toThrow(
+      "missing data array",
+    );
   });
 });

@@ -27,7 +27,7 @@ export interface DcpConfig {
 export function toDisplayName(
   id: string,
   cost?: OpenCodeModelCost,
-  limit?: OpenCodeModelLimit,
+  limit?: Partial<OpenCodeModelLimit>,
 ): string {
   // strip trailing slashes before processing (e.g. "openai/" → "openai")
   const trimmed = id.replace(/\/+$/, "");
@@ -291,9 +291,9 @@ export function sortObjectKeys<T extends Record<string, unknown>>(obj: T): T {
 /**
  * Sort an object's keys alphabetically by a given string key in the nested objects.
  */
-export function sortByKey<T extends Record<string, unknown>>(
+export function sortByKey<T extends Record<string, object>>(
   obj: T,
-  key: keyof T[keyof T] & string,
+  key: string,
 ): T {
   return Object.fromEntries(Object.entries(obj).sort(([, a], [, b]) => {
     const aVal = a && typeof a === "object" && key in a ? (a as Record<string, unknown>)[key] : "";
