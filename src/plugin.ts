@@ -4,11 +4,10 @@ import { fetchModelInfo, fetchModels } from "./fetch.js";
 import { buildProviderConfig } from "./provider.js";
 import type {
   LiteLLMModelInfoEntry,
+  Logger,
   OpenCodeConfig,
   OpenCodeProvider,
 } from "./types.js";
-
-type Logger = (level: "info" | "warn" | "error", message: string) => Promise<void>;
 
 function entriesForModels(
   modelIDs: string[],
@@ -66,6 +65,7 @@ export async function discoverProviderModels(
       false,
       typeof modelNameFormat === "string" ? modelNameFormat : undefined,
       providerID,
+      log,
     );
 
     provider.models = {

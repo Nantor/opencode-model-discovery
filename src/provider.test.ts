@@ -301,22 +301,25 @@ describe("buildProviderConfig", () => {
   });
 
   it("warns and overwrites when duplicate model ids produce the same sanitized key", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const entries = [
-        { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
-        { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
-      ];
-      const config = buildProviderConfig(entries, "http://localhost:4000");
-      // Only one entry should exist (last one wins)
-      expect(Object.keys(config.models ?? {})).toHaveLength(1);
-      expect(config.models?.["my-model"]).toBeDefined();
-      // A warning must have been emitted for the duplicate
-      expect(warnSpy).toHaveBeenCalledOnce();
-      expect(warnSpy.mock.calls[0][0]).toContain("my-model");
-    } finally {
-      warnSpy.mockRestore();
-    }
+    const log = vi.fn();
+    const entries = [
+      { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
+      { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
+    ];
+    const config = buildProviderConfig(
+      entries,
+      "http://localhost:4000",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log,
+    );
+    expect(Object.keys(config.models ?? {})).toHaveLength(1);
+    expect(config.models?.["my-model"]).toBeDefined();
+    expect(log).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("my-model"));
   });
 
   // ---------------------------------------------------------------------------
@@ -357,18 +360,23 @@ describe("buildProviderConfig", () => {
   });
 
   it("warns when different ids sanitize to the same key", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      // "my model" and "my_model" both sanitize to "my_model"
-      const entries = [
-        { model_name: "my model", litellm_params: { model: "my model" }, model_info: {} },
-        { model_name: "my_model", litellm_params: { model: "my_model" }, model_info: {} },
-      ];
-      const config = buildProviderConfig(entries, "http://localhost:4000");
-      expect(Object.keys(config.models ?? {})).toHaveLength(1);
-      expect(warnSpy).toHaveBeenCalledOnce();
-    } finally {
-      warnSpy.mockRestore();
-    }
+    const log = vi.fn();
+    const entries = [
+      { model_name: "my model", litellm_params: { model: "my model" }, model_info: {} },
+      { model_name: "my_model", litellm_params: { model: "my_model" }, model_info: {} },
+    ];
+    const config = buildProviderConfig(
+      entries,
+      "http://localhost:4000",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log,
+    );
+    expect(Object.keys(config.models ?? {})).toHaveLength(1);
+    expect(log).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("my_model"));
   });
 });

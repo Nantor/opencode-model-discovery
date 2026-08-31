@@ -173,7 +173,10 @@ export function resolveConfigFile(dir: string): string {
  * Load and parse an existing opencode config file; return empty config on missing file.
  * Handles both JSON and JSONC (comments, trailing commas) by stripping comments first.
  */
-export function loadConfig(filePath: string): OpenCodeConfig {
+export function loadConfig(
+  filePath: string,
+  onError?: (message: string) => void,
+): OpenCodeConfig {
   if (!existsSync(filePath)) {
     return {
       $schema: "https://opencode.ai/config.json",
@@ -183,7 +186,7 @@ export function loadConfig(filePath: string): OpenCodeConfig {
   try {
     return JSON.parse(stripJsoncComments(raw)) as OpenCodeConfig;
   } catch {
-    console.error(
+    onError?.(
       `Warning: could not parse existing config at ${filePath} – starting fresh.`,
     );
     return { $schema: "https://opencode.ai/config.json" };
@@ -235,7 +238,10 @@ export function resolveOutputPath(opts: {
  * Load and parse an existing DCP config file; return empty config on missing file.
  * Handles both JSON and JSONC (comments, trailing commas) by stripping comments first.
  */
-export function loadDcpConfig(filePath: string): DcpConfig {
+export function loadDcpConfig(
+  filePath: string,
+  onError?: (message: string) => void,
+): DcpConfig {
   if (!existsSync(filePath)) {
     return {
       $schema:
@@ -246,7 +252,7 @@ export function loadDcpConfig(filePath: string): DcpConfig {
   try {
     return JSON.parse(stripJsoncComments(raw)) as DcpConfig;
   } catch {
-    console.error(
+    onError?.(
       `Warning: could not parse existing DCP config at ${filePath} – starting fresh.`,
     );
     return {

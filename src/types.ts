@@ -2,6 +2,11 @@
 // Types
 // ---------------------------------------------------------------------------
 
+export type Logger = (
+  level: "info" | "warn" | "error",
+  message: string,
+) => void | Promise<void>;
+
 export interface LiteLLMModel {
   id: string;
   object?: string;
