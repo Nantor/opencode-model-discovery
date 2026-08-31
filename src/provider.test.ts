@@ -52,6 +52,51 @@ describe("buildProviderConfig", () => {
     expect(config.models?.["gpt-4o"].name).toBe("Gpt 4o");
   });
 
+  it("makes all model entry fields available to modelNameFormat", () => {
+    const config = buildProviderConfig(
+      [
+        {
+          model_name: "openai/gpt-4o",
+          litellm_params: { model: "openai/gpt-4o" },
+          model_info: {
+            max_tokens: 128000,
+            max_output_tokens: 16384,
+            input_cost_per_token: 0.000005,
+            output_cost_per_token: 0.000015,
+            supports_reasoning: true,
+            supports_function_calling: true,
+            supports_vision: true,
+          },
+        },
+      ],
+      "http://localhost:4000",
+      undefined,
+      "LiteLLM",
+      false,
+      "{name} | {id} | {provider} | {limit.context}/{limit.output} | {cost.input}/{cost.output} | {reasoning} | {tool_call} | {attachment} | {modalities.input}",
+      "gateway",
+    );
+
+    expect(config.models?.["openai/gpt-4o"]?.name).toBe(
+      'Gpt 4o | openai/gpt-4o | gateway | 128000/16384 | 5/15 | true | true | true | ["text","image"]',
+    );
+  });
+
+  it("leaves unavailable model entry placeholders unchanged", () => {
+    const config = buildProviderConfig(
+      [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: {} }],
+      "http://localhost:4000",
+      undefined,
+      "LiteLLM",
+      false,
+      "{name} {family} {limit.context}",
+    );
+
+    expect(config.models?.["gpt-4o"]?.name).toBe(
+      "Gpt 4o {family} {limit.context}",
+    );
+  });
+
   it("preserves the original id when key differs from id", () => {
     const config = buildProviderConfig(
       [{ model_name: "openai/gpt-4o-mini", litellm_params: { model: "openai/gpt-4o-mini" }, model_info: {} }],

@@ -4,7 +4,7 @@
 
 export interface LiteLLMModel {
   id: string;
-  object: string;
+  object?: string;
   created?: number;
   owned_by?: string;
 }
@@ -197,6 +197,8 @@ export interface OpenCodeProvider {
   options?: {
     baseURL?: string;
     apiKey?: string;
+    discovery?: boolean;
+    modelNameFormat?: string;
     [key: string]: unknown;
   };
   models?: Record<string, OpenCodeModelEntry>;

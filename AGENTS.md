@@ -1,12 +1,11 @@
 # AGENTS.md
 
-litellm-to-opencode — fetch LiteLLM models → map into OpenCode provider config
+opencode-model-discovery - OpenCode plugin for discovering models from OpenAI-compatible providers
 
 ## Essential commands
 
 ```
 npm run build        # tsc → dist/
-npm run dev          # tsx src/index.ts
 npm run lint         # eslint src
 npm run lint:fix     # eslint src --fix
 npm run test         # vitest (watch)
@@ -15,32 +14,21 @@ npm run test:run     # vitest run
 
 ## Architecture
 
-Single-file entrypoint: `src/index.ts`. Tests: `src/index.test.ts`. Build output: `dist/`.
+Plugin entrypoint: `src/index.ts`. Hook implementation: `src/plugin.ts`. Build output: `dist/`.
 
-Flow: fetch models from `GET /v1/models` → build provider block using `@ai-sdk/openai-compatible` → merge into `opencode.json` → validate against schema fetched from `https://opencode.ai/config.json`.
+Flow: OpenCode loads the plugin -> the `config` hook finds providers with `options.discovery: true` -> fetches `GET /v1/models` and optional metadata from `GET /v1/model/info` -> merges discovered models into the live provider config. Explicit model entries win.
 
-### Key exported helpers (for tests)
+### Key exports
 
-- `fetchModels(baseURL, apiKey?)` — GET `/v1/models`
-- `fetchModelInfo(baseURL, apiKey?)` — GET `/v1/model/info`
-- `buildProviderConfig(models, baseURL, apiKey?, providerName)` — maps models to provider block; `providerName` defaults to `"LiteLLM"`
-- `mergeProvider(existing, providerKey, providerValue)` — replaces named provider, leaves other keys untouched
-- `loadConfig(filePath)` — loads a file with explicit path; returns `{ $schema: "https://opencode.ai/config.json" }` for missing/broken files
-- `resolveConfigFile(dir)` — resolves config file path: tries `opencode.jsonc` first, then `opencode.json`, defaults to `.json`
-- `resolveOutputPath({ global, path })` — `resolveConfigFile(dir)` / `resolveConfigFile(dir)` / `resolveConfigFile(cwd)`
-- `validateConfig(config)` — fetches + caches schema from opencode.ai, validates config; throws on mismatch
-- `getOpenCodeConfigSchema()` — returns cached Zod schema compiled from OpenCode JSON Schema
-- `resetSchemaCache()` — clears module-level schema cache (test-only)
-- `toDisplayName(id)` — `gpt-4o-mini` → `"Gpt 4o Mini"` (strips provider prefix `org/`)
-- `sanitizeKey(id)` — keeps `[a-zA-Z0-9\-._/]`, replaces rest with `_`
-
-### Schema validation
-
-The tool fetches and compiles the real OpenCode JSON Schema at runtime via `z.fromJSONSchema()`. External `$ref` values starting with `http` are stripped (Zod only supports local refs). The schema cache is module-level and cached for the process lifetime.
+- `ModelDiscoveryPlugin` - OpenCode plugin function and default export
+- `applyDiscovery(config, log?)` - applies discovery to an OpenCode config
+- `discoverProviderModels(providerID, provider, log?)` - discovers one opted-in provider
 
 ### Provider config
 
-All providers use `@ai-sdk/openai-compatible` adapter with `baseURL + "/v1"`. When a model's sanitized key differs from its original id, the original `id` is preserved as an explicit field (e.g. `my model!` → key `my_model_` with `id: "my model!"`).
+The plugin only touches providers with `options.discovery === true`. `options.baseURL` may include `/v1`. Plugin-only options are removed before OpenCode initializes the AI SDK adapter.
+
+`modelNameFormat` supports `{name}`, `{id}`, and `{provider}` placeholders. Without it, model IDs are normalized into display names.
 
 ## ESLint conventions
 
@@ -50,16 +38,6 @@ All providers use `@ai-sdk/openai-compatible` adapter with `baseURL + "/v1"`. Wh
 - **Consistent type assertions** (error)
 - **prefer-const** (error)
 
-## CLI usage
-
-```
-npx tsx src/index.ts --base-url http://localhost:4000 \
-  [--api-key sk-...] [--provider-id litellm] [--provider-name LiteLLM] \
-  [--global | --path /dir] [--dry-run]
-```
-
-`--global` and `--path` are mutually exclusive.
-
 ## Test fixtures
 
-Tests mock `fetch` globally via `vi.stubGlobal("fetch", vi.fn())`. A `MOCK_OPENCODE_SCHEMA` constant (defined in the test file) stands in for the remote OpenCode schema. Always `resetSchemaCache()` after tests that modify the fetch mock.
+Tests mock `fetch` globally via `vi.stubGlobal("fetch", vi.fn())`.

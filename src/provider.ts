@@ -13,12 +13,36 @@ import { toNum } from "./types.js";
 // Map LiteLLM models → OpenCode provider config
 // ---------------------------------------------------------------------------
 
+function formatModelName(
+  format: string,
+  model: OpenCodeModelEntry,
+  providerID: string,
+): string {
+  const values: Record<string, unknown> = { ...model, provider: providerID };
+
+  return format.replace(/\{([^{}]+)\}/g, (placeholder, path: string) => {
+    let value: unknown = values;
+    for (const segment of path.split(".")) {
+      if (typeof value !== "object" || value === null || !(segment in value)) {
+        return placeholder;
+      }
+      value = (value as Record<string, unknown>)[segment];
+    }
+
+    if (value === undefined) return placeholder;
+    if (typeof value === "object" && value !== null) return JSON.stringify(value);
+    return String(value);
+  });
+}
+
 export function buildProviderConfig(
   modelInfoEntries: LiteLLMModelInfoEntry[],
   baseURL: string,
   apiKey?: string,
   providerName = "LiteLLM",
   applyReasoningSummaryWorkaround = true,
+  modelNameFormat?: string,
+  providerID = "litellm",
 ): OpenCodeProvider {
   // Build lookups from model_name → model_info and model_name → litellm_params
   const infoMap = new Map<string, LiteLLMModelInfo>();
@@ -192,10 +216,18 @@ export function buildProviderConfig(
 
     if (key in modelsMap) {
       console.warn(
-        `[litellm-to-opencode] Duplicate model key "${key}" (from id "${id}") — previous entry overwritten.`,
+        `[opencode-model-discovery] Duplicate model key "${key}" (from id "${id}") - previous entry overwritten.`,
       );
     }
-    modelEntry.name = toDisplayName(id, modelEntry.cost, modelEntry.limit);
+    const normalizedName = toDisplayName(id);
+    const formatValues: OpenCodeModelEntry = {
+      ...modelEntry,
+      id,
+      name: normalizedName,
+    };
+    modelEntry.name = modelNameFormat !== undefined
+      ? formatModelName(modelNameFormat, formatValues, providerID)
+      : normalizedName;
     modelsMap[key] = modelEntry;
   }
 
