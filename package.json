@@ -2,6 +2,7 @@
   "name": "opencode-model-discovery",
   "version": "1.0.0",
   "description": "OpenCode plugin that discovers models from OpenAI-compatible providers",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/opencode-model-discovery.js",
   "types": "./dist/index.d.ts",
