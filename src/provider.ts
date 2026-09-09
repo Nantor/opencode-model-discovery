@@ -22,23 +22,67 @@ function formatModelName(
 ): string {
   const values: Record<string, unknown> = { ...model, provider: providerID };
 
-  return format.replace(/\{([^{}]+)\}/g, (placeholder, path: string) => {
-    let value: unknown = values;
-    for (const segment of path.split(".")) {
-      if (typeof value !== "object" || value === null || !(segment in value)) {
-        return "";
-      }
-      value = (value as Record<string, unknown>)[segment];
+  return format.replace(/\{([^{}]+)\}/g, (_placeholder, content: string) => {
+    if (content.startsWith("?")) {
+      return formatConditional(content.slice(1), values);
     }
-
-    if (value === undefined) return "";
-    if (typeof value === "object" && value !== null) return JSON.stringify(value);
-    if (typeof value === "number") {
-      if (path.startsWith("limit.")) return formatCompactNumber(value);
-      if (path.startsWith("cost.")) return value.toFixed(2);
-    }
-    return String(value);
+    return formatValue(resolvePath(content, values), content);
   });
+}
+
+function formatConditional(
+  condition: string,
+  values: Record<string, unknown>,
+): string {
+  const separatorIndex = condition.indexOf(":");
+  if (separatorIndex === -1) return "";
+
+  const pathsPart = condition.slice(0, separatorIndex);
+  const bodyPart = condition.slice(separatorIndex + 1);
+  const bodyMatch = /^'((?:\\'|[^'])*)'$/.exec(bodyPart);
+  if (!bodyMatch) return "";
+
+  const hasAnd = pathsPart.includes("&");
+  const hasOr = pathsPart.includes("|");
+  if (hasAnd && hasOr) return "";
+
+  const paths = pathsPart.split(hasAnd ? "&" : "|").map((path) => path.trim());
+  if (paths.some((path) => path === "")) return "";
+
+  const resolvedValues = paths.map((path) => resolvePath(path, values));
+  const shouldRender = hasAnd
+    ? resolvedValues.every(Boolean)
+    : resolvedValues.some(Boolean);
+  if (!shouldRender) return "";
+
+  return bodyMatch[1]
+    .replace(/\\'/g, "'")
+    .replace(/\$(\d+)/g, (_match, index: string) => {
+      const numericIndex = Number(index);
+      const value = resolvedValues[numericIndex];
+      return value ? formatValue(value, paths[numericIndex]) : "";
+    });
+}
+
+function resolvePath(path: string, values: Record<string, unknown>): unknown {
+  let value: unknown = values;
+  for (const segment of path.split(".")) {
+    if (typeof value !== "object" || value === null || !(segment in value)) {
+      return undefined;
+    }
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return value;
+}
+
+function formatValue(value: unknown, path: string): string {
+  if (value === undefined) return "";
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (path.startsWith("limit.")) return formatCompactNumber(value);
+    if (path.startsWith("cost.")) return value.toFixed(2);
+  }
+  return String(value);
 }
 
 function formatCompactNumber(value: number): string {
