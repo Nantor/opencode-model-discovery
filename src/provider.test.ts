@@ -23,6 +23,11 @@ describe("buildProviderConfig", () => {
     expect(config.options?.baseURL).toBe("http://localhost:4000/v1");
   });
 
+  it("does not duplicate an existing /v1 path", () => {
+    const config = buildProviderConfig(sampleEntries, "http://localhost:4000/v1/");
+    expect(config.options?.baseURL).toBe("http://localhost:4000/v1");
+  });
+
   it("includes the API key in options when provided", () => {
     const config = buildProviderConfig(sampleEntries, "http://localhost:4000", "sk-secret");
     expect(config.options?.apiKey).toBe("sk-secret");
@@ -43,7 +48,7 @@ describe("buildProviderConfig", () => {
     expect(config.name).toBe("LiteLLM");
   });
 
-  it("builds a models map with sanitized keys and display names", () => {
+  it("builds a models map with exact model ids and display names", () => {
     const config = buildProviderConfig(
       [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: {} }],
       "http://localhost:4000",
@@ -78,11 +83,38 @@ describe("buildProviderConfig", () => {
     );
 
     expect(config.models?.["openai/gpt-4o"]?.name).toBe(
-      'Gpt 4o | openai/gpt-4o | gateway | 128000/16384 | 5/15 | true | true | true | ["text","image"]',
+      'Gpt 4o | openai/gpt-4o | gateway | 128K/16.4K | 5.00/15.00 | true | true | true | ["text","image"]',
     );
   });
 
-  it("leaves unavailable model entry placeholders unchanged", () => {
+  it("formats cost and limit placeholders compactly", () => {
+    const config = buildProviderConfig(
+      [
+        {
+          model_name: "gpt-4o",
+          litellm_params: { model: "gpt-4o" },
+          model_info: {
+            max_tokens: 1_048_576,
+            max_input_tokens: 128_000,
+            max_output_tokens: 16_384,
+            input_cost_per_token: 0.0000027555,
+            output_cost_per_token: 0.00001651,
+          },
+        },
+      ],
+      "http://localhost:4000",
+      undefined,
+      "LiteLLM",
+      false,
+      "{name} ({cost.input}↑ {cost.output}↓)[{limit.input}↑ {limit.output}↓ {limit.context}↻]",
+    );
+
+    expect(config.models?.["gpt-4o"]?.name).toBe(
+      "Gpt 4o (2.76↑ 16.51↓)[128K↑ 16.4K↓ 1.05M↻]",
+    );
+  });
+
+  it("renders unavailable model entry placeholders as empty strings", () => {
     const config = buildProviderConfig(
       [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: {} }],
       "http://localhost:4000",
@@ -92,9 +124,7 @@ describe("buildProviderConfig", () => {
       "{name} {family} {limit.context}",
     );
 
-    expect(config.models?.["gpt-4o"]?.name).toBe(
-      "Gpt 4o {family} {limit.context}",
-    );
+    expect(config.models?.["gpt-4o"]?.name).toBe("Gpt 4o  ");
   });
 
   it("preserves the original id when key differs from id", () => {
@@ -106,14 +136,14 @@ describe("buildProviderConfig", () => {
     expect(config.models?.["openai/gpt-4o-mini"]).toBeDefined();
   });
 
-  it("adds explicit id field when sanitized key differs from original id", () => {
+  it("preserves special characters in model keys", () => {
     const config = buildProviderConfig(
       [{ model_name: "my model!", litellm_params: { model: "my model!" }, model_info: {} }],
       "http://localhost:4000",
     );
-    const entry = config.models?.["my_model_"];
+    const entry = config.models?.["my model!"];
     expect(entry).toBeDefined();
-    expect(entry?.id).toBe("my model!");
+    expect(entry?.id).toBeUndefined();
   });
 
   it("populates model details from modelInfoEntries", () => {
@@ -300,7 +330,28 @@ describe("buildProviderConfig", () => {
     expect(entry?.cost).toBeUndefined();
   });
 
-  it("warns and overwrites when duplicate model ids produce the same sanitized key", () => {
+  it("rejects blank, negative, and non-finite numeric metadata", () => {
+    const config = buildProviderConfig(
+      [
+        {
+          model_name: "test-model",
+          litellm_params: { model: "test-model" },
+          model_info: {
+            max_tokens: "",
+            max_output_tokens: Number.POSITIVE_INFINITY,
+            input_cost_per_token: Number.NaN,
+            output_cost_per_token: -1,
+          },
+        },
+      ],
+      "http://localhost:4000",
+    );
+
+    expect(config.models?.["test-model"]?.limit).toBeUndefined();
+    expect(config.models?.["test-model"]?.cost).toBeUndefined();
+  });
+
+  it("warns and overwrites duplicate model ids", () => {
     const log = vi.fn();
     const entries = [
       { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
@@ -320,6 +371,43 @@ describe("buildProviderConfig", () => {
     expect(config.models?.["my-model"]).toBeDefined();
     expect(log).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("my-model"));
+  });
+
+  it("ignores rejected duplicate warnings", async () => {
+    const entries = [
+      { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
+      { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
+    ];
+
+    expect(() =>
+      buildProviderConfig(
+        entries,
+        "http://localhost:4000",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        async () => Promise.reject(new Error("logger offline")),
+      ),
+    ).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("keeps prototype-sensitive model ids", () => {
+    const entries = [
+      { model_name: "__proto__", litellm_params: { model: "__proto__" }, model_info: {} },
+      { model_name: "constructor", litellm_params: { model: "constructor" }, model_info: {} },
+      { model_name: "toString", litellm_params: { model: "toString" }, model_info: {} },
+    ];
+
+    const config = buildProviderConfig(entries, "http://localhost:4000");
+
+    expect(Object.keys(config.models ?? {})).toEqual([
+      "__proto__",
+      "constructor",
+      "toString",
+    ]);
   });
 
   // ---------------------------------------------------------------------------
@@ -359,7 +447,7 @@ describe("buildProviderConfig", () => {
     });
   });
 
-  it("warns when different ids sanitize to the same key", () => {
+  it("does not collide distinct ids that previously sanitized to the same key", () => {
     const log = vi.fn();
     const entries = [
       { model_name: "my model", litellm_params: { model: "my model" }, model_info: {} },
@@ -375,8 +463,9 @@ describe("buildProviderConfig", () => {
       undefined,
       log,
     );
-    expect(Object.keys(config.models ?? {})).toHaveLength(1);
-    expect(log).toHaveBeenCalledOnce();
-    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("my_model"));
+    expect(Object.keys(config.models ?? {})).toHaveLength(2);
+    expect(config.models?.["my model"]).toBeDefined();
+    expect(config.models?.my_model).toBeDefined();
+    expect(log).not.toHaveBeenCalled();
   });
 });

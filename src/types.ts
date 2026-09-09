@@ -16,10 +16,11 @@ export interface LiteLLMModel {
 
 /** Coerce a value to number, returning undefined if it's not a valid number. */
 export function toNum(v: unknown): number | undefined {
-  if (typeof v === "number") return v;
+  if (typeof v === "number") return Number.isFinite(v) && v >= 0 ? v : undefined;
   if (typeof v === "string") {
+    if (v.trim() === "") return undefined;
     const n = Number(v);
-    return Number.isFinite(n) ? n : undefined;
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
   }
   return undefined;
 }
@@ -203,6 +204,7 @@ export interface OpenCodeProvider {
     baseURL?: string;
     apiKey?: string;
     discovery?: boolean;
+    discoveryTimeout?: number;
     modelNameFormat?: string;
     [key: string]: unknown;
   };
@@ -212,6 +214,6 @@ export interface OpenCodeProvider {
 
 export interface OpenCodeConfig {
   $schema?: string;
-  provider?: Record<string, OpenCodeProvider>;
+  provider?: Record<string, OpenCodeProvider | undefined>;
   [key: string]: unknown;
 }

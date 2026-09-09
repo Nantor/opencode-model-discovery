@@ -7,7 +7,8 @@ import type {
   OpenCodeProvider,
   Logger,
 } from "./types.js";
-import { sanitizeKey, sortByKey, toDisplayName } from "./utils.js";
+import { normalizeBaseURL } from "./fetch.js";
+import { sortByKey, toDisplayName } from "./utils.js";
 import { toNum } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -25,15 +26,30 @@ function formatModelName(
     let value: unknown = values;
     for (const segment of path.split(".")) {
       if (typeof value !== "object" || value === null || !(segment in value)) {
-        return placeholder;
+        return "";
       }
       value = (value as Record<string, unknown>)[segment];
     }
 
-    if (value === undefined) return placeholder;
+    if (value === undefined) return "";
     if (typeof value === "object" && value !== null) return JSON.stringify(value);
+    if (typeof value === "number") {
+      if (path.startsWith("limit.")) return formatCompactNumber(value);
+      if (path.startsWith("cost.")) return value.toFixed(2);
+    }
     return String(value);
   });
+}
+
+function formatCompactNumber(value: number): string {
+  const suffixes = ["", "K", "M", "B", "T"];
+  let scaled = value;
+  let suffixIndex = 0;
+  while (Math.abs(scaled) >= 1000 && suffixIndex < suffixes.length - 1) {
+    scaled /= 1000;
+    suffixIndex++;
+  }
+  return Number(scaled.toPrecision(3)).toString() + suffixes[suffixIndex];
 }
 
 export function buildProviderConfig(
@@ -64,17 +80,18 @@ export function buildProviderConfig(
     }
   }
 
-  const modelsMap: Record<string, OpenCodeModelEntry> = {};
+  const modelsMap: Record<string, OpenCodeModelEntry> = Object.create(null) as Record<
+    string,
+    OpenCodeModelEntry
+  >;
 
   for (const entry of modelInfoEntries) {
     const id = entry.model_name;
-    const key = sanitizeKey(id);
-    // Look up model info and params by original id and sanitized key
-    const info = infoMap.get(id) ?? infoMap.get(key);
-    const params = paramsMap.get(id) ?? paramsMap.get(key);
+    const key = id;
+    const info = infoMap.get(id);
+    const params = paramsMap.get(id);
     const modelEntry: OpenCodeModelEntry = {
       name: "",
-      ...(key !== id ? { id } : {}),
     };
 
     if (info) {
@@ -216,11 +233,16 @@ export function buildProviderConfig(
       modelEntry.interleaved = { field: "reasoning_content" };
     }
 
-    if (key in modelsMap) {
-      void log?.(
-        "warn",
-        `[opencode-model-discovery] Duplicate model key "${key}" (from id "${id}") - previous entry overwritten.`,
-      );
+    if (Object.hasOwn(modelsMap, key)) {
+      try {
+        const result = log?.(
+          "warn",
+          `[opencode-model-discovery] Duplicate model key "${key}" (from id "${id}") - previous entry overwritten.`,
+        );
+        if (result) void Promise.resolve(result).catch(() => undefined);
+      } catch {
+        // Logging must never prevent provider initialization.
+      }
     }
     const normalizedName = toDisplayName(id);
     const formatValues: OpenCodeModelEntry = {
@@ -238,7 +260,7 @@ export function buildProviderConfig(
     npm: "@ai-sdk/openai-compatible",
     name: providerName,
     options: {
-      baseURL: `${baseURL.replace(/\/$/, "")}/v1`,
+      baseURL: `${normalizeBaseURL(baseURL)}/v1`,
       ...(apiKey ? { apiKey } : {}),
     },
     models: sortByKey(modelsMap, "name"),

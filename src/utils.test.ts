@@ -270,6 +270,13 @@ describe("loadConfig", () => {
     });
   });
 
+  it("preserves comma-like trailing syntax inside strings", () => {
+    const filePath = join(tmpDir, "strings.jsonc");
+    writeFileSync(filePath, '{"value":"x,}","array":"x,]",}');
+
+    expect(loadConfig(filePath)).toEqual({ value: "x,}", array: "x,]" });
+  });
+
   it("returns a default config on invalid JSONC", () => {
     const filePath = join(tmpDir, "bad.json");
     writeFileSync(filePath, "not valid json", "utf-8");
@@ -284,8 +291,13 @@ describe("loadConfig", () => {
 
 describe("resolveOutputPath", () => {
   it("returns opencode.json in cwd by default", () => {
-    const result = resolveOutputPath({ global: false });
-    expect(result).toBe(join(process.cwd(), "opencode.json"));
+    const dir = mkdtempSync(join(tmpdir(), "litellm-resolve-"));
+    try {
+      const result = resolveOutputPath({ global: false, path: dir });
+      expect(result).toBe(join(dir, "opencode.json"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("returns path inside the specified --path directory", () => {

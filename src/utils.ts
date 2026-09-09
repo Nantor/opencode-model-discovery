@@ -131,8 +131,24 @@ function stripJsoncComments(input: string): string {
   // now strip trailing commas by removing , before ] or } (with optional whitespace between)
   let output = "";
   i = 0;
+  let inString = false;
   while (i < result.length) {
-    if (result[i] === ",") {
+    if (result[i] === '"') {
+      output += result[i];
+      i++;
+      inString = !inString;
+      continue;
+    }
+    if (inString && result[i] === "\\") {
+      output += result[i];
+      i++;
+      if (i < result.length) {
+        output += result[i];
+        i++;
+      }
+      continue;
+    }
+    if (!inString && result[i] === ",") {
       // look ahead past whitespace for ] or }
       let j = i + 1;
       while (j < result.length && /\s/.test(result[j])) j++;

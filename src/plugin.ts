@@ -9,6 +9,18 @@ import type {
   OpenCodeProvider,
 } from "./types.js";
 
+async function safeLog(
+  log: Logger | undefined,
+  level: "info" | "warn" | "error",
+  message: string,
+): Promise<void> {
+  try {
+    await log?.(level, message);
+  } catch {
+    // Logging must never prevent provider initialization.
+  }
+}
+
 function entriesForModels(
   modelIDs: string[],
   infoEntries: LiteLLMModelInfoEntry[],
@@ -16,8 +28,12 @@ function entriesForModels(
   const byID = new Map<string, LiteLLMModelInfoEntry>();
   for (const entry of infoEntries) {
     byID.set(entry.model_name, entry);
+  }
+  for (const entry of infoEntries) {
     if (entry.litellm_params.model) {
-      byID.set(entry.litellm_params.model, entry);
+      if (!byID.has(entry.litellm_params.model)) {
+        byID.set(entry.litellm_params.model, entry);
+      }
     }
   }
 
@@ -31,27 +47,41 @@ function entriesForModels(
 
 export async function discoverProviderModels(
   providerID: string,
-  provider: OpenCodeProvider,
+  provider: OpenCodeProvider | undefined,
   log?: Logger,
 ): Promise<void> {
+  if (!provider) return;
   const options = provider.options;
   if (options?.discovery !== true) return;
 
-  const { discovery: _discovery, modelNameFormat, ...adapterOptions } = options;
+  const {
+    discovery: _discovery,
+    discoveryTimeout: _discoveryTimeout,
+    modelNameFormat,
+    ...adapterOptions
+  } = options;
   provider.options = adapterOptions;
 
   if (!options.baseURL) {
-    await log?.("warn", `Provider "${providerID}" has discovery enabled but no baseURL`);
+    await safeLog(log, "warn", `Provider "${providerID}" has discovery enabled but no baseURL`);
     return;
   }
 
+  const timeoutMs =
+    typeof options.discoveryTimeout === "number" &&
+    Number.isFinite(options.discoveryTimeout) &&
+    options.discoveryTimeout >= 0
+      ? options.discoveryTimeout
+      : undefined;
+
   try {
-    const models = await fetchModels(options.baseURL, options.apiKey);
+    const models = await fetchModels(options.baseURL, options.apiKey, timeoutMs);
     let infoEntries: LiteLLMModelInfoEntry[] = [];
     try {
-      infoEntries = await fetchModelInfo(options.baseURL, options.apiKey);
+      infoEntries = await fetchModelInfo(options.baseURL, options.apiKey, timeoutMs);
     } catch (error) {
-      await log?.(
+      await safeLog(
+        log,
         "warn",
         `Could not fetch detailed model info for "${providerID}": ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -72,9 +102,10 @@ export async function discoverProviderModels(
       ...discovered.models,
       ...provider.models,
     };
-    await log?.("info", `Discovered ${models.length} model(s) for provider "${providerID}"`);
+    await safeLog(log, "info", `Discovered ${models.length} model(s) for provider "${providerID}"`);
   } catch (error) {
-    await log?.(
+    await safeLog(
+      log,
       "error",
       `Model discovery failed for "${providerID}": ${error instanceof Error ? error.message : String(error)}`,
     );

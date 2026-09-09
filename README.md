@@ -17,14 +17,17 @@ Add the plugin and enable discovery on each provider that should be queried:
       "options": {
         "baseURL": "http://localhost:4000/v1",
         "apiKey": "{env:LITELLM_API_KEY}",
-        "discovery": true
+        "discovery": true,
+        "discoveryTimeout": 10000
       }
     }
   }
 }
 ```
 
-The plugin fetches `/v1/models` when OpenCode starts and enriches matching models with metadata from `/v1/model/info`. Manually configured model entries take precedence over discovered entries.
+The plugin fetches `/v1/models` when OpenCode starts and enriches matching models with metadata from `/v1/model/info`. Manually configured model entries take precedence over discovered entries. Provider model IDs are used unchanged as model keys, including spaces and punctuation.
+
+Discovery requests time out after 10 seconds by default. Set `discoveryTimeout` to a non-negative number of milliseconds to override it. Discovery and metadata failures are logged but do not prevent OpenCode from starting; existing manually configured models remain available.
 
 Restart OpenCode after changing plugin or provider configuration.
 
@@ -55,6 +58,9 @@ Supported placeholders:
 - `{provider}`: OpenCode provider ID
 - Any `OpenCodeModelEntry` field, using dot notation for nested values. Examples include `{family}`, `{reasoning}`, `{limit.context}`, `{cost.input}`, `{modalities.input}`, and `{options.reasoningSummary}`.
 
-Arrays and objects are inserted as JSON. Placeholders for fields that are not available on a model are left unchanged.
+Arrays and objects are inserted as JSON. Placeholders for fields that are not available on a model resolve to an empty string.
+Numeric `{limit.*}` placeholders use compact three-significant-digit notation such as `128K` or `1.05M`. Numeric `{cost.*}` placeholders are rounded to two decimal places.
 
-`discovery` and `modelNameFormat` are consumed by the plugin and are not passed to the underlying AI SDK provider.
+`discovery`, `discoveryTimeout`, and `modelNameFormat` are consumed by the plugin and are not passed to the underlying AI SDK provider.
+
+Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
