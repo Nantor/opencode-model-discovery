@@ -1,6 +1,44 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { fetchModelInfo } from "./fetch.js";
+import { fetchModelInfo, fetchModels } from "./fetch.js";
+
+describe("fetchModels", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("normalizes /v1 and filters malformed model entries", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ id: "model-a" }, null, {}, { id: 123 }],
+      }),
+    } as Response);
+
+    await expect(fetchModels("http://localhost:4000/v1/")).resolves.toEqual([
+      { id: "model-a" },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:4000/v1/models",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("throws when the models response has no data array", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    } as Response);
+
+    await expect(fetchModels("http://localhost:4000")).rejects.toThrow(
+      "missing data array",
+    );
+  });
+});
 
 // ---------------------------------------------------------------------------
 // fetchModelInfo
@@ -25,7 +63,10 @@ describe("fetchModelInfo", () => {
     await fetchModelInfo("http://localhost:4000");
     expect(mockFetch).toHaveBeenCalledWith(
       "http://localhost:4000/v1/model/info",
-      expect.objectContaining({ headers: expect.objectContaining({ "Content-Type": "application/json" }) }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 
@@ -39,7 +80,7 @@ describe("fetchModelInfo", () => {
     await fetchModelInfo("http://localhost:4000/");
     expect(mockFetch).toHaveBeenCalledWith(
       "http://localhost:4000/v1/model/info",
-      expect.any(Object),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -55,6 +96,7 @@ describe("fetchModelInfo", () => {
       expect.any(String),
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer sk-secret" }),
+        signal: expect.any(AbortSignal),
       }),
     );
   });

@@ -17,6 +17,7 @@ async function fetchEndpoint<T>(
   baseURL: string,
   path: string,
   apiKey?: string,
+  timeoutMs = 10_000,
 ): Promise<T> {
   const url = `${baseURL.replace(/\/+$/, "")}${path}`;
   const headers: Record<string, string> = {
@@ -26,11 +27,17 @@ async function fetchEndpoint<T>(
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
 
-  const res = await fetch(url, { headers });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText} from ${url}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers, signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText} from ${url}`);
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timeout);
   }
-  return (await res.json()) as T;
 }
 
 export function normalizeBaseURL(baseURL: string): string {
@@ -40,9 +47,15 @@ export function normalizeBaseURL(baseURL: string): string {
 export async function fetchModels(
   baseURL: string,
   apiKey?: string,
+  timeoutMs?: number,
 ): Promise<LiteLLMModel[]> {
   const url = normalizeBaseURL(baseURL);
-  const json = await fetchEndpoint<LiteLLMModelsResponse>(url, "/v1/models", apiKey);
+  const json = await fetchEndpoint<LiteLLMModelsResponse>(
+    url,
+    "/v1/models",
+    apiKey,
+    timeoutMs,
+  );
   if (!Array.isArray(json.data)) {
     throw new Error(`Unexpected response from ${url}/v1/models: missing data array`);
   }
@@ -55,17 +68,28 @@ export async function fetchModels(
 export async function fetchModelInfo(
   baseURL: string,
   apiKey?: string,
+  timeoutMs?: number,
 ): Promise<LiteLLMModelInfoEntry[]> {
   const url = normalizeBaseURL(baseURL);
   const json = await fetchEndpoint<LiteLLMModelInfoResponse>(
     url,
     "/v1/model/info",
     apiKey,
+    timeoutMs,
   );
 
   if (!Array.isArray(json.data)) {
     throw new Error(`Unexpected response from ${url}/v1/model/info: missing data array`);
   }
 
-  return json.data;
+  return json.data.filter(
+    (entry): entry is LiteLLMModelInfoEntry =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof entry.model_name === "string" &&
+      typeof entry.litellm_params === "object" &&
+      entry.litellm_params !== null &&
+      typeof entry.model_info === "object" &&
+      entry.model_info !== null,
+  );
 }
