@@ -127,6 +127,70 @@ describe("buildProviderConfig", () => {
     expect(config.models?.["gpt-4o"]?.name).toBe("Gpt 4o  ");
   });
 
+  it("renders conditional templates when all ampersand-separated paths are truthy", () => {
+    const config = buildProviderConfig(
+      [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: {} }],
+      "http://localhost:4000",
+      undefined,
+      "LiteLLM",
+      false,
+      "{?name&provider:'$0 via $1'}{?name&family:' ($0: $1)'}",
+      "gateway",
+    );
+
+    expect(config.models?.["gpt-4o"]?.name).toBe("Gpt 4o via gateway");
+  });
+
+  it("renders pipe conditionals when any path is truthy and preserves substitution positions", () => {
+    const config = buildProviderConfig(
+      [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: {} }],
+      "http://localhost:4000",
+      undefined,
+      "LiteLLM",
+      false,
+      "{?family|name:'family=$0, name=$1'}{?family|reasoning:' unavailable'}",
+    );
+
+    expect(config.models?.["gpt-4o"]?.name).toBe("family=, name=Gpt 4o");
+  });
+
+  it("formats dotted conditional paths and suppresses JavaScript-falsy values", () => {
+    const config = buildProviderConfig(
+      [
+        {
+          model_name: "gpt-4o",
+          litellm_params: { model: "gpt-4o" },
+          model_info: {
+            max_tokens: 128_000,
+            max_input_tokens: 128_000,
+            max_output_tokens: 0,
+          },
+        },
+      ],
+      "http://localhost:4000",
+      undefined,
+      "LiteLLM",
+      false,
+      "{?limit.input:'$0 input'}{?limit.output:' $0 output'}",
+    );
+
+    expect(config.models?.["gpt-4o"]?.name).toBe("128K input");
+  });
+
+  it("supports escaped quotes and suppresses malformed conditional templates", () => {
+    const config = buildProviderConfig(
+      [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: {} }],
+      "http://localhost:4000",
+      undefined,
+      "LiteLLM",
+      false,
+      "{?name:'it\\'s: $0'}{?name&provider|id:' invalid'}{?name:invalid}",
+      "gateway",
+    );
+
+    expect(config.models?.["gpt-4o"]?.name).toBe("it's: Gpt 4o");
+  });
+
   it("preserves the original id when key differs from id", () => {
     const config = buildProviderConfig(
       [{ model_name: "openai/gpt-4o-mini", litellm_params: { model: "openai/gpt-4o-mini" }, model_info: {} }],
