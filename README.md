@@ -31,6 +31,22 @@ Discovery requests time out after 10 seconds by default. Set `discoveryTimeout` 
 
 Restart OpenCode after changing plugin or provider configuration.
 
+## Resolved Configuration
+
+Use OpenCode's debug command to print the final merged configuration after discovery:
+
+```bash
+opencode debug config
+```
+
+To save it for inspection:
+
+```bash
+opencode debug config > resolved-opencode.json
+```
+
+The output includes discovered models, manual overrides, and all inherited OpenCode settings. It can include API keys and other secrets, so do not commit or share it.
+
 ## Model Names
 
 Without `modelNameFormat`, model IDs are normalized into display names. For example, `openai/gpt-4o-mini` becomes `Gpt 4o Mini`.
