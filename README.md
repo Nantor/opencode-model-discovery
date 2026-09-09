@@ -80,3 +80,7 @@ Numeric `{limit.*}` placeholders use compact three-significant-digit notation su
 `discovery`, `discoveryTimeout`, and `modelNameFormat` are consumed by the plugin and are not passed to the underlying AI SDK provider.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
