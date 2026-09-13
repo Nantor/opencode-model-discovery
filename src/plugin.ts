@@ -9,6 +9,10 @@ import type {
   OpenCodeProvider,
 } from "./types.js";
 
+type RequestBodyTransform = (
+  body: Record<string, unknown>,
+) => Record<string, unknown>;
+
 async function safeLog(
   log: Logger | undefined,
   level: "info" | "warn" | "error",
@@ -43,6 +47,48 @@ function entriesForModels(
       ? { ...info, model_name: id }
       : { model_name: id, litellm_params: { model: id }, model_info: {} };
   });
+}
+
+function usesMaxCompletionTokens(entry: LiteLLMModelInfoEntry): boolean {
+  const parameters = entry.model_info.supported_openai_params;
+  return (
+    parameters?.includes("max_completion_tokens") === true &&
+    !parameters.includes("max_tokens")
+  );
+}
+
+function addMaxCompletionTokensTransform(
+  provider: OpenCodeProvider,
+  entries: LiteLLMModelInfoEntry[],
+): void {
+  const modelIDs = new Set(
+    entries
+      .filter(usesMaxCompletionTokens)
+      .map((entry) => entry.model_name),
+  );
+  if (modelIDs.size === 0) return;
+
+  const existingTransform = provider.options?.transformRequestBody;
+  const transform = typeof existingTransform === "function"
+    ? existingTransform as RequestBodyTransform
+    : undefined;
+
+  provider.options = {
+    ...provider.options,
+    transformRequestBody: (body: Record<string, unknown>): Record<string, unknown> => {
+      const transformed = transform ? transform(body) : body;
+      if (
+        typeof transformed.model !== "string" ||
+        !modelIDs.has(transformed.model) ||
+        !Object.hasOwn(transformed, "max_tokens")
+      ) {
+        return transformed;
+      }
+
+      const { max_tokens, ...rest } = transformed;
+      return { ...rest, max_completion_tokens: max_tokens };
+    },
+  };
 }
 
 export async function discoverProviderModels(
@@ -87,8 +133,12 @@ export async function discoverProviderModels(
       );
     }
 
+    const discoveredEntries = entriesForModels(
+      models.map((model) => model.id),
+      infoEntries,
+    );
     const discovered = buildProviderConfig(
-      entriesForModels(models.map((model) => model.id), infoEntries),
+      discoveredEntries,
       options.baseURL,
       options.apiKey,
       provider.name ?? providerID,
@@ -102,6 +152,7 @@ export async function discoverProviderModels(
       ...discovered.models,
       ...provider.models,
     };
+    addMaxCompletionTokensTransform(provider, discoveredEntries);
     await safeLog(log, "info", `Discovered ${models.length} model(s) for provider "${providerID}"`);
   } catch (error) {
     await safeLog(

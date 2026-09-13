@@ -227,6 +227,73 @@ describe("applyDiscovery", () => {
     });
   });
 
+  it("uses max_completion_tokens only for models that require it", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().endsWith("/models")
+          ? { data: [{ id: "US-gpt-6-astra" }, { id: "gpt-4o" }] }
+          : {
+              data: [
+                {
+                  model_name: "US-gpt-6-astra",
+                  litellm_params: { model: "US-gpt-6-astra" },
+                  model_info: {
+                    supported_openai_params: ["max_completion_tokens"],
+                  },
+                },
+                {
+                  model_name: "gpt-4o",
+                  litellm_params: { model: "gpt-4o" },
+                  model_info: { supported_openai_params: ["max_tokens"] },
+                },
+              ],
+            },
+    }) as Response);
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const transform = config.provider?.gateway.options?.transformRequestBody as
+      | ((body: Record<string, unknown>) => Record<string, unknown>)
+      | undefined;
+    expect(transform?.({ model: "US-gpt-6-astra", max_tokens: 1000 })).toEqual({
+      model: "US-gpt-6-astra",
+      max_completion_tokens: 1000,
+    });
+    expect(transform?.({ model: "gpt-4o", max_tokens: 1000 })).toEqual({
+      model: "gpt-4o",
+      max_tokens: 1000,
+    });
+  });
+
+  it("does not add a token transform without compatible metadata", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().endsWith("/models")
+          ? { data: [{ id: "gpt-4o" }] }
+          : { data: [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: {} }] },
+    }) as Response);
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    expect(config.provider?.gateway.options).not.toHaveProperty("transformRequestBody");
+  });
+
   it("times out discovery requests and consumes the timeout option", async () => {
     vi.mocked(fetch).mockImplementation((_input, init) =>
       new Promise((_resolve, reject) => {

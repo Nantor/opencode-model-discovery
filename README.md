@@ -29,6 +29,8 @@ The plugin fetches `/v1/models` when OpenCode starts and enriches matching model
 
 Discovery requests time out after 10 seconds by default. Set `discoveryTimeout` to a non-negative number of milliseconds to override it. Discovery and metadata failures are logged but do not prevent OpenCode from starting; existing manually configured models remain available.
 
+When `/v1/model/info` identifies a model as supporting `max_completion_tokens` but not `max_tokens`, the plugin rewrites only that model's completion limit request parameter. This supports a shared LiteLLM proxy where some routed models, such as Azure deployments, reject `max_tokens`. Models without that exact metadata keep the default `max_tokens` parameter.
+
 Restart OpenCode after changing plugin or provider configuration.
 
 ## Resolved Configuration
