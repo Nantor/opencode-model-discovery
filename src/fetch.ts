@@ -10,7 +10,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch model info from GET /v1/model/info.
+ * Fetch model info from GET /v2/model/info?return_wildcard_routes=true.
  * Returns entries containing `model_info` details (max_tokens, costs, feature flags, etc.)
  */
 async function fetchEndpoint<T>(
@@ -52,7 +52,7 @@ export async function fetchModels(
   const url = normalizeBaseURL(baseURL);
   const json = await fetchEndpoint<LiteLLMModelsResponse>(
     url,
-    "/v1/models",
+    "/v1/models?return_wildcard_routes=true",
     apiKey,
     timeoutMs,
   );
@@ -73,13 +73,13 @@ export async function fetchModelInfo(
   const url = normalizeBaseURL(baseURL);
   const json = await fetchEndpoint<LiteLLMModelInfoResponse>(
     url,
-    "/v1/model/info",
+    "/v2/model/info?return_wildcard_routes=true",
     apiKey,
     timeoutMs,
   );
 
   if (!Array.isArray(json.data)) {
-    throw new Error(`Unexpected response from ${url}/v1/model/info: missing data array`);
+    throw new Error(`Unexpected response from ${url}/v2/model/info: missing data array`);
   }
 
   return json.data.filter(

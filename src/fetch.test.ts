@@ -23,7 +23,7 @@ describe("fetchModels", () => {
       { id: "model-a" },
     ]);
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:4000/v1/models",
+      "http://localhost:4000/v1/models?return_wildcard_routes=true",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -53,7 +53,7 @@ describe("fetchModelInfo", () => {
     vi.unstubAllGlobals();
   });
 
-  it("calls the correct /v1/model/info URL", async () => {
+  it("calls the correct /v2/model/info URL", async () => {
     const mockFetch = vi.mocked(fetch);
     mockFetch.mockResolvedValue({
       ok: true,
@@ -62,7 +62,7 @@ describe("fetchModelInfo", () => {
 
     await fetchModelInfo("http://localhost:4000");
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:4000/v1/model/info",
+      "http://localhost:4000/v2/model/info?return_wildcard_routes=true",
       expect.objectContaining({
         headers: expect.objectContaining({ "Content-Type": "application/json" }),
         signal: expect.any(AbortSignal),
@@ -79,7 +79,7 @@ describe("fetchModelInfo", () => {
 
     await fetchModelInfo("http://localhost:4000/");
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:4000/v1/model/info",
+      "http://localhost:4000/v2/model/info?return_wildcard_routes=true",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });

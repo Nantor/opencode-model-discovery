@@ -41,12 +41,36 @@ function entriesForModels(
     }
   }
 
-  return modelIDs.map((id) => {
+  const resolved: LiteLLMModelInfoEntry[] = modelIDs.map((id) => {
     const info = byID.get(id);
-    return info
-      ? { ...info, model_name: id }
-      : { model_name: id, litellm_params: { model: id }, model_info: {} };
+    if (!info) {
+      return { model_name: id, litellm_params: { model: id }, model_info: {} };
+    }
+    // A wildcard route id (e.g. "claude-opus-4-5*") matches an info entry;
+    // key the model by its resolved litellm_params.model so the asterisk is
+    // not carried into the config.
+    if (info.model_name.endsWith("*") && info.litellm_params.model) {
+      return { ...info, model_name: info.litellm_params.model };
+    }
+    return { ...info, model_name: id };
   });
+
+  // Wildcard routes (e.g. "claude-opus-4-5*") reported by
+  // return_wildcard_routes=true expose their real id only via
+  // litellm_params.model. Ensure each is present under that key so the
+  // claude (and other wildcard) models surface in the config even if
+  // /v1/models does not list them under a usable id.
+  const known = new Set(modelIDs);
+  const wildcardTargets = new Set<string>();
+  for (const entry of infoEntries) {
+    if (!entry.model_name.endsWith("*")) continue;
+    const target = entry.litellm_params.model;
+    if (!target || known.has(target) || wildcardTargets.has(target)) continue;
+    wildcardTargets.add(target);
+    resolved.push({ ...entry, model_name: target, litellm_params: entry.litellm_params });
+  }
+
+  return resolved;
 }
 
 function usesMaxCompletionTokens(entry: LiteLLMModelInfoEntry): boolean {

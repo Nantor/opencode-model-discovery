@@ -25,13 +25,29 @@ Add the plugin and enable discovery on each provider that should be queried:
 }
 ```
 
-The plugin fetches `/v1/models` when OpenCode starts and enriches matching models with metadata from `/v1/model/info`. Manually configured model entries take precedence over discovered entries. Provider model IDs are used unchanged as model keys, including spaces and punctuation.
+The plugin fetches `/v1/models?return_wildcard_routes=true` when OpenCode starts and enriches matching models with metadata from `/v2/model/info?return_wildcard_routes=true`. Manually configured model entries take precedence over discovered entries. Provider model IDs are used unchanged as model keys, including spaces and punctuation. Wildcard routes reported by `return_wildcard_routes=true` (e.g. `claude-opus-4-5*`) are keyed by their resolved `litellm_params.model` id instead of the wildcard name.
 
 Discovery requests time out after 10 seconds by default. Set `discoveryTimeout` to a non-negative number of milliseconds to override it. Discovery and metadata failures are logged but do not prevent OpenCode from starting; existing manually configured models remain available.
 
-When `/v1/model/info` identifies a model as supporting `max_completion_tokens` but not `max_tokens`, the plugin rewrites only that model's completion limit request parameter. This supports a shared LiteLLM proxy where some routed models, such as Azure deployments, reject `max_tokens`. Models without that exact metadata keep the default `max_tokens` parameter.
+When `/v2/model/info` identifies a model as supporting `max_completion_tokens` but not `max_tokens`, the plugin rewrites only that model's completion limit request parameter. This supports a shared LiteLLM proxy where some routed models, such as Azure deployments, reject `max_tokens`. Models without that exact metadata keep the default `max_tokens` parameter.
 
 Restart OpenCode after changing plugin or provider configuration.
+
+## System Test
+
+Create an untracked `test.env` containing `baseUrl` and `apiKey`, then run:
+
+```bash
+npm run test:system
+```
+
+To run one discovered model, set `SYSTEM_TEST_MODEL`:
+
+```bash
+SYSTEM_TEST_MODEL=US-gpt-6-astra npm run test:system
+```
+
+The system-test launcher starts OpenCode with a temporary inline configuration that loads this plugin and discovers every model exposed by that LiteLLM endpoint. It then registers one Vitest case per discovered model; each invokes `opencode run` with `Return just 1`, forces OpenCode's output budget to one token, and expects exactly `1`. Each model has a five-minute execution limit; set `SYSTEM_TEST_TIMEOUT_MS` to override it. This exercises OpenCode's plugin loading, discovery hook, AI SDK adapter, and request transform, including the discovered `max_completion_tokens` compatibility handling. The launcher exits successfully without running tests when `test.env` is absent or does not define both variables.
 
 ## Resolved Configuration
 

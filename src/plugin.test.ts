@@ -18,7 +18,7 @@ describe("applyDiscovery", () => {
       return {
         ok: true,
         json: async () =>
-          url.endsWith("/models")
+          url.includes("/models")
             ? { data: [{ id: "openai/gpt-4o-mini" }] }
             : {
                 data: [
@@ -68,7 +68,7 @@ describe("applyDiscovery", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
-        input.toString().endsWith("/models")
+        input.toString().includes("/models")
           ? { data: [{ id: "openai/gpt-4o-mini" }] }
           : { data: [] },
     }) as Response);
@@ -97,7 +97,7 @@ describe("applyDiscovery", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
-        input.toString().endsWith("/models")
+        input.toString().includes("/models")
           ? { data: [{ id: "gpt-4o" }, { id: "claude-3-5-sonnet" }] }
           : { data: [] },
     }) as Response);
@@ -123,7 +123,7 @@ describe("applyDiscovery", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
-        input.toString().endsWith("/models")
+        input.toString().includes("/models")
           ? { data: [{ id: "llama3.1:8b" }] }
           : { data: [] },
     }) as Response);
@@ -145,7 +145,7 @@ describe("applyDiscovery", () => {
 
   it("keeps basic discovery when detailed model info fails", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-      if (input.toString().endsWith("/model/info")) {
+      if (input.toString().includes("/model/info")) {
         return { ok: false, status: 404, statusText: "Not Found" } as Response;
       }
       return {
@@ -171,7 +171,7 @@ describe("applyDiscovery", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
-        input.toString().endsWith("/models")
+        input.toString().includes("/models")
           ? { data: [{ id: "model-a" }] }
           : { data: [null, { model_name: "broken" }] },
     }) as Response);
@@ -193,7 +193,7 @@ describe("applyDiscovery", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
-        input.toString().endsWith("/models")
+        input.toString().includes("/models")
           ? { data: [{ id: "gpt-4o" }] }
           : {
               data: [
@@ -231,7 +231,7 @@ describe("applyDiscovery", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
-        input.toString().endsWith("/models")
+        input.toString().includes("/models")
           ? { data: [{ id: "US-gpt-6-astra" }, { id: "gpt-4o" }] }
           : {
               data: [
@@ -277,7 +277,7 @@ describe("applyDiscovery", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
-        input.toString().endsWith("/models")
+        input.toString().includes("/models")
           ? { data: [{ id: "gpt-4o" }] }
           : { data: [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: {} }] },
     }) as Response);
@@ -333,5 +333,75 @@ describe("applyDiscovery", () => {
     await expect(
       applyDiscovery(config, async () => Promise.reject(new Error("logger offline"))),
     ).resolves.toBeUndefined();
+  });
+
+  it("surfaces claude wildcard routes keyed by their resolved model id", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [{ id: "gpt-4o" }] }
+          : {
+              data: [
+                {
+                  model_name: "claude-opus-4-5*",
+                  litellm_params: { model: "vertex_ai/claude-opus-4-5@20251101" },
+                  model_info: {
+                    max_tokens: 64000,
+                    max_output_tokens: 64000,
+                    max_input_tokens: 200000,
+                    supports_reasoning: true,
+                  },
+                },
+              ],
+            },
+    }) as Response);
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const models = config.provider?.gateway.models ?? {};
+    expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeDefined();
+    expect(models["claude-opus-4-5*"]).toBeUndefined();
+    expect(models["gpt-4o"]).toBeDefined();
+  });
+
+  it("normalizes a wildcard id from /v1/models to its resolved model id", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [{ id: "claude-opus-4-5*" }] }
+          : {
+              data: [
+                {
+                  model_name: "claude-opus-4-5*",
+                  litellm_params: { model: "vertex_ai/claude-opus-4-5@20251101" },
+                  model_info: { max_tokens: 64000, max_output_tokens: 64000 },
+                },
+              ],
+            },
+    }) as Response);
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const models = config.provider?.gateway.models ?? {};
+    expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeDefined();
+    expect(models["claude-opus-4-5*"]).toBeUndefined();
   });
 });
