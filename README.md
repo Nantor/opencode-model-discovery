@@ -17,8 +17,10 @@ Add the plugin and enable discovery on each provider that should be queried:
       "options": {
         "baseURL": "http://localhost:4000/v1",
         "apiKey": "{env:LITELLM_API_KEY}",
-        "discovery": true,
-        "discoveryTimeout": 10000
+        "opencode-model-discovery": {
+          "discovery": true,
+          "discoveryTimeout": 10000
+        }
       }
     }
   }
@@ -77,8 +79,10 @@ Set `modelNameFormat` to customize display names:
     "litellm": {
       "options": {
         "baseURL": "http://localhost:4000/v1",
-        "discovery": true,
-        "modelNameFormat": "{name} ({provider}/{id})"
+        "opencode-model-discovery": {
+          "discovery": true,
+          "modelNameFormat": "{name} ({provider}/{id})"
+        }
       }
     }
   }
@@ -119,7 +123,7 @@ The example might produce `Gpt 4o (gpt-4o) - 128K context [reasoning]`. Missing 
 - Escape a literal single quote in the body as `\'`: `{?name:'it\'s $0'}`.
 - Do not mix `&` and `|` in one conditional expression.
 
-`discovery`, `discoveryTimeout`, and `modelNameFormat` are consumed by the plugin and are not passed to the underlying AI SDK provider.
+`discovery`, `discoveryTimeout`, and `modelNameFormat` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
 

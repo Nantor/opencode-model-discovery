@@ -36,7 +36,7 @@ describe("applyDiscovery", () => {
       provider: {
         enabled: {
           npm: "@ai-sdk/openai-compatible",
-          options: { baseURL: "http://localhost:4000/v1", discovery: true },
+          options: { baseURL: "http://localhost:4000/v1", "opencode-model-discovery": { discovery: true } },
         },
         disabled: {
           options: { baseURL: "http://localhost:5000/v1" },
@@ -51,7 +51,7 @@ describe("applyDiscovery", () => {
       "Gpt 4o Mini",
     );
     expect(config.provider?.disabled.models).toBeUndefined();
-    expect(config.provider?.enabled.options).not.toHaveProperty("discovery");
+    expect(config.provider?.enabled.options).not.toHaveProperty("opencode-model-discovery");
   });
 
   it("ignores undefined provider entries", async () => {
@@ -78,8 +78,10 @@ describe("applyDiscovery", () => {
         gateway: {
           options: {
             baseURL: "https://llm.example.com/v1",
-            discovery: true,
-            modelNameFormat: "{name} | {provider}/{id}",
+            "opencode-model-discovery": {
+              discovery: true,
+              modelNameFormat: "{name} | {provider}/{id}",
+            },
           },
         },
       },
@@ -90,7 +92,7 @@ describe("applyDiscovery", () => {
     expect(config.provider?.gateway.models?.["openai/gpt-4o-mini"]?.name).toBe(
       "Gpt 4o Mini | gateway/openai/gpt-4o-mini",
     );
-    expect(config.provider?.gateway.options).not.toHaveProperty("modelNameFormat");
+    expect(config.provider?.gateway.options).not.toHaveProperty("opencode-model-discovery");
   });
 
   it("keeps manually configured models over discovered values", async () => {
@@ -105,7 +107,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         litellm: {
-          options: { baseURL: "http://localhost:4000", discovery: true },
+          options: { baseURL: "http://localhost:4000", "opencode-model-discovery": { discovery: true } },
           models: { "gpt-4o": { name: "My GPT" } },
         },
       },
@@ -131,7 +133,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         litellm: {
-          options: { baseURL: "http://localhost:4000", discovery: true },
+          options: { baseURL: "http://localhost:4000", "opencode-model-discovery": { discovery: true } },
           models: { "llama3.1:8b": { name: "My Llama" } },
         },
       },
@@ -157,7 +159,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
@@ -179,7 +181,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
@@ -214,7 +216,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
@@ -253,7 +255,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
@@ -284,7 +286,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
@@ -307,8 +309,10 @@ describe("applyDiscovery", () => {
         gateway: {
           options: {
             baseURL: "https://llm.example.com/v1",
-            discovery: true,
-            discoveryTimeout: 1,
+            "opencode-model-discovery": {
+              discovery: true,
+              discoveryTimeout: 1,
+            },
           },
         },
       },
@@ -317,7 +321,7 @@ describe("applyDiscovery", () => {
     await applyDiscovery(config);
 
     expect(config.provider?.gateway.models).toBeUndefined();
-    expect(config.provider?.gateway.options).not.toHaveProperty("discoveryTimeout");
+    expect(config.provider?.gateway.options).not.toHaveProperty("opencode-model-discovery");
   });
 
   it("ignores logger failures", async () => {
@@ -325,7 +329,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
@@ -360,7 +364,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
@@ -393,7 +397,7 @@ describe("applyDiscovery", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };

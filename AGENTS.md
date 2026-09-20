@@ -16,7 +16,7 @@ npm run test:run     # vitest run
 
 Plugin entrypoint: `src/index.ts`. Hook implementation: `src/plugin.ts`. Build output: the single bundled file `dist/opencode-model-discovery.js`.
 
-Flow: OpenCode loads the plugin -> the `config` hook finds providers with `options.discovery: true` -> fetches `GET /v1/models` and optional metadata from `GET /v2/model/info?return_wildcard_routes=true` -> merges discovered models into the live provider config. Explicit model entries win.
+Flow: OpenCode loads the plugin -> the `config` hook finds providers with `options["opencode-model-discovery"].discovery: true` -> fetches `GET /v1/models` and optional metadata from `GET /v2/model/info?return_wildcard_routes=true` -> merges discovered models into the live provider config. Explicit model entries win.
 
 ### Key exports
 
@@ -26,7 +26,7 @@ Flow: OpenCode loads the plugin -> the `config` hook finds providers with `optio
 
 ### Provider config
 
-The plugin only touches providers with `options.discovery === true`. `options.baseURL` may include `/v1`. Plugin-only options are removed before OpenCode initializes the AI SDK adapter.
+The plugin only touches providers with `options["opencode-model-discovery"].discovery === true`. `options.baseURL` may include `/v1`. Plugin-only options (the whole `options["opencode-model-discovery"]` object) are removed before OpenCode initializes the AI SDK adapter.
 
 `modelNameFormat` supports `{name}`, `{id}`, and `{provider}` placeholders. Without it, model IDs are normalized into display names.
 

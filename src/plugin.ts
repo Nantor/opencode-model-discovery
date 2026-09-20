@@ -119,26 +119,24 @@ export async function discoverProviderModels(
 ): Promise<void> {
   if (!provider) return;
   const options = provider.options;
-  if (options?.discovery !== true) return;
+  const pluginOptions = options?.["opencode-model-discovery"];
+  if (pluginOptions?.discovery !== true) return;
 
-  const {
-    discovery: _discovery,
-    discoveryTimeout: _discoveryTimeout,
-    modelNameFormat,
-    ...adapterOptions
-  } = options;
-  provider.options = adapterOptions;
+  if (options) {
+    const { ["opencode-model-discovery"]: _pluginConfig, ...adapterOptions } = options;
+    provider.options = adapterOptions;
+  }
 
-  if (!options.baseURL) {
+  if (!options?.baseURL) {
     await safeLog(log, "warn", `Provider "${providerID}" has discovery enabled but no baseURL`);
     return;
   }
 
   const timeoutMs =
-    typeof options.discoveryTimeout === "number" &&
-    Number.isFinite(options.discoveryTimeout) &&
-    options.discoveryTimeout >= 0
-      ? options.discoveryTimeout
+    typeof pluginOptions.discoveryTimeout === "number" &&
+    Number.isFinite(pluginOptions.discoveryTimeout) &&
+    pluginOptions.discoveryTimeout >= 0
+      ? pluginOptions.discoveryTimeout
       : undefined;
 
   try {
@@ -164,7 +162,9 @@ export async function discoverProviderModels(
       options.apiKey,
       provider.name ?? providerID,
       false,
-      typeof modelNameFormat === "string" ? modelNameFormat : undefined,
+      typeof pluginOptions.modelNameFormat === "string"
+        ? pluginOptions.modelNameFormat
+        : undefined,
       providerID,
       log,
     );

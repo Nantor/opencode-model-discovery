@@ -197,15 +197,19 @@ export interface OpenCodeModelEntry {
   variants?: Record<string, { disabled?: boolean }>;
 }
 
+export interface OpenCodeDiscoveryOptions {
+  discovery?: boolean;
+  discoveryTimeout?: number;
+  modelNameFormat?: string;
+}
+
 export interface OpenCodeProvider {
   npm?: string;
   name?: string;
   options?: {
     baseURL?: string;
     apiKey?: string;
-    discovery?: boolean;
-    discoveryTimeout?: number;
-    modelNameFormat?: string;
+    "opencode-model-discovery"?: OpenCodeDiscoveryOptions;
     [key: string]: unknown;
   };
   models?: Record<string, OpenCodeModelEntry>;

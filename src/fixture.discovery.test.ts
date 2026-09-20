@@ -48,14 +48,14 @@ describe("applyDiscovery with real fixture responses", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
 
     await applyDiscovery(config);
 
-    const models = config.provider?.gateway.models ?? {};
+    const models = config?.provider?.gateway?.models ?? {};
     expect(fetch).toHaveBeenCalledTimes(2);
 
     for (const model of v1Models.data) {
@@ -78,14 +78,14 @@ describe("applyDiscovery with real fixture responses", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
 
     await applyDiscovery(config);
 
-    const models = config.provider?.gateway.models ?? {};
+    const models = config?.provider?.gateway?.models ?? {};
     const ids = Object.keys(models);
 
     for (const entry of v2ModelInfo.data) {
@@ -105,14 +105,14 @@ describe("applyDiscovery with real fixture responses", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
 
     await applyDiscovery(config);
 
-    const models = config.provider?.gateway.models ?? {};
+    const models = config?.provider?.gateway?.models ?? {};
 
     const gpt4o = models["gpt-4o"];
     expect(gpt4o?.limit).toEqual({
@@ -141,14 +141,14 @@ describe("applyDiscovery with real fixture responses", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
 
     await applyDiscovery(config);
 
-    const models = config.provider?.gateway.models ?? {};
+    const models = config?.provider?.gateway?.models ?? {};
     const gpt4o = models["gpt-4o"];
     // 2.75e-06 and 1.1e-05 per token -> per-million-token prices, plus the
     // cache_read tier reported in the fixture (1.25e-06 per token).
@@ -169,14 +169,14 @@ describe("applyDiscovery with real fixture responses", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
         },
       },
     };
 
     await applyDiscovery(config);
 
-    const transform = config.provider?.gateway.options?.transformRequestBody as
+    const transform = config?.provider?.gateway?.options?.transformRequestBody as
       | ((body: Record<string, unknown>) => Record<string, unknown>)
       | undefined;
     expect(transform).toBeDefined();
@@ -194,7 +194,7 @@ describe("applyDiscovery with real fixture responses", () => {
     const config: OpenCodeConfig = {
       provider: {
         gateway: {
-          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
           models: { "gpt-4o": { name: "My GPT-4o" } },
         },
       },
@@ -202,6 +202,6 @@ describe("applyDiscovery with real fixture responses", () => {
 
     await applyDiscovery(config);
 
-    expect(config.provider?.gateway.models?.["gpt-4o"]?.name).toBe("My GPT-4o");
+    expect(config?.provider?.gateway?.models?.["gpt-4o"]?.name).toBe("My GPT-4o");
   });
 });
