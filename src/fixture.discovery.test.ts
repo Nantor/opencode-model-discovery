@@ -1,0 +1,207 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { applyDiscovery } from "./plugin.js";
+import type { OpenCodeConfig } from "./types.js";
+
+function loadFixture(name: string): unknown {
+  const file = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "../test/fixtures",
+    name,
+  );
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+
+const v1Models = loadFixture("v1.models.json") as { data: { id: string }[] };
+const v2ModelInfo = loadFixture("v2.model.info.json") as {
+  data: {
+    model_name: string;
+    litellm_params: { model: string };
+    model_info: Record<string, unknown>;
+  }[];
+};
+
+function stubFetchFromFixtures(): void {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = input.toString();
+    const body = url.includes("/model/info") ? v2ModelInfo : v1Models;
+    return { ok: true, json: async () => body } as Response;
+  });
+}
+
+describe("applyDiscovery with real fixture responses", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("discovers models for every id reported by /v1/models", async () => {
+    stubFetchFromFixtures();
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const models = config.provider?.gateway.models ?? {};
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    for (const model of v1Models.data) {
+      const wildcard = model.id.endsWith("*");
+      const matched = v2ModelInfo.data.find(
+        (entry) => entry.model_name === model.id,
+      );
+      // Wildcard routes (e.g. "claude-opus-4-5*") are keyed by their resolved
+      // litellm_params.model, not by the asterisk id.
+      const expectedKey =
+        wildcard && matched ? matched.litellm_params.model : model.id;
+      expect(models[expectedKey]).toBeDefined();
+      expect(models[model.id] ?? models[expectedKey]).toBeDefined();
+    }
+  });
+
+  it("resolves claude wildcard routes to their concrete model ids", async () => {
+    stubFetchFromFixtures();
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const models = config.provider?.gateway.models ?? {};
+    const ids = Object.keys(models);
+
+    for (const entry of v2ModelInfo.data) {
+      if (!entry.model_name.endsWith("*")) continue;
+      const resolved = entry.litellm_params.model;
+      expect(ids).toContain(resolved);
+      expect(ids).not.toContain(entry.model_name);
+      expect(models[resolved]?.reasoning).toBe(true);
+      expect(models[resolved]?.tool_call).toBe(true);
+      expect(models[resolved]?.limit).toBeDefined();
+    }
+  });
+
+  it("applies limits and capabilities from detailed model info", async () => {
+    stubFetchFromFixtures();
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const models = config.provider?.gateway.models ?? {};
+
+    const gpt4o = models["gpt-4o"];
+    expect(gpt4o?.limit).toEqual({
+      context: 16384,
+      output: 16384,
+      input: 128000,
+    });
+    expect(gpt4o?.attachment).toBe(true);
+    expect(gpt4o?.tool_call).toBe(true);
+
+    const deepseek = models["deepseek-v4-flash-sovereign"];
+    expect(deepseek?.reasoning).toBe(true);
+    expect(deepseek?.tool_call).toBe(true);
+    expect(deepseek?.limit?.input).toBe(220000);
+
+    const imageModel = models["gemini-2.5-flash-image"];
+    expect(imageModel?.modalities).toEqual({
+      input: ["text", "image", "pdf"],
+      output: ["text"],
+    });
+  });
+
+  it("computes cost from per-token pricing in the fixture", async () => {
+    stubFetchFromFixtures();
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const models = config.provider?.gateway.models ?? {};
+    const gpt4o = models["gpt-4o"];
+    // 2.75e-06 and 1.1e-05 per token -> per-million-token prices, plus the
+    // cache_read tier reported in the fixture (1.25e-06 per token).
+    expect(gpt4o?.cost).toEqual({ input: 2.75, output: 11, cache_read: 1.25 });
+
+    const claude = models["vertex_ai/claude-opus-4-5@20251101"];
+    expect(claude?.cost).toEqual({
+      input: 5.5,
+      output: 27.5,
+      cache_read: 0.55,
+      cache_write: 6.875,
+    });
+  });
+
+  it("prefers max_completion_tokens for models that accept it", async () => {
+    stubFetchFromFixtures();
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const transform = config.provider?.gateway.options?.transformRequestBody as
+      | ((body: Record<string, unknown>) => Record<string, unknown>)
+      | undefined;
+    expect(transform).toBeDefined();
+
+    // US-gpt-6-astra supports both max_tokens and max_completion_tokens in the
+    // fixture; the transform should prefer max_completion_tokens.
+    expect(
+      transform?.({ model: "US-gpt-6-astra", max_tokens: 1000 }),
+    ).toEqual({ model: "US-gpt-6-astra", max_completion_tokens: 1000 });
+  });
+
+  it("keeps explicit models configured before discovery", async () => {
+    stubFetchFromFixtures();
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", discovery: true },
+          models: { "gpt-4o": { name: "My GPT-4o" } },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    expect(config.provider?.gateway.models?.["gpt-4o"]?.name).toBe("My GPT-4o");
+  });
+});

@@ -75,10 +75,7 @@ function entriesForModels(
 
 function usesMaxCompletionTokens(entry: LiteLLMModelInfoEntry): boolean {
   const parameters = entry.model_info.supported_openai_params;
-  return (
-    parameters?.includes("max_completion_tokens") === true &&
-    !parameters.includes("max_tokens")
-  );
+  return parameters?.includes("max_completion_tokens") === true;
 }
 
 function addMaxCompletionTokensTransform(
