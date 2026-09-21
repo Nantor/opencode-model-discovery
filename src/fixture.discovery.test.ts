@@ -59,20 +59,11 @@ describe("applyDiscovery with real fixture responses", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
 
     for (const model of v1Models.data) {
-      const wildcard = model.id.endsWith("*");
-      const matched = v2ModelInfo.data.find(
-        (entry) => entry.model_name === model.id,
-      );
-      // Wildcard routes (e.g. "claude-opus-4-5*") are keyed by their resolved
-      // litellm_params.model, not by the asterisk id.
-      const expectedKey =
-        wildcard && matched ? matched.litellm_params.model : model.id;
-      expect(models[expectedKey]).toBeDefined();
-      expect(models[model.id] ?? models[expectedKey]).toBeDefined();
+      expect(models[model.id]).toBeDefined();
     }
   });
 
-  it("resolves claude wildcard routes to their concrete model ids", async () => {
+  it("preserves wildcard route ids reported by /v1/models", async () => {
     stubFetchFromFixtures();
 
     const config: OpenCodeConfig = {
@@ -90,12 +81,11 @@ describe("applyDiscovery with real fixture responses", () => {
 
     for (const entry of v2ModelInfo.data) {
       if (!entry.model_name.endsWith("*")) continue;
-      const resolved = entry.litellm_params.model;
-      expect(ids).toContain(resolved);
-      expect(ids).not.toContain(entry.model_name);
-      expect(models[resolved]?.reasoning).toBe(true);
-      expect(models[resolved]?.tool_call).toBe(true);
-      expect(models[resolved]?.limit).toBeDefined();
+      const id = entry.model_name;
+      expect(ids).toContain(id);
+      expect(models[id]?.reasoning).toBe(true);
+      expect(models[id]?.tool_call).toBe(true);
+      expect(models[id]?.limit).toBeDefined();
     }
   });
 
@@ -154,7 +144,7 @@ describe("applyDiscovery with real fixture responses", () => {
     // cache_read tier reported in the fixture (1.25e-06 per token).
     expect(gpt4o?.cost).toEqual({ input: 2.75, output: 11, cache_read: 1.25 });
 
-    const claude = models["vertex_ai/claude-opus-4-5@20251101"];
+    const claude = models["claude-opus-4-5*"];
     expect(claude?.cost).toEqual({
       input: 5.5,
       output: 27.5,

@@ -339,7 +339,7 @@ describe("applyDiscovery", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("surfaces claude wildcard routes keyed by their resolved model id", async () => {
+  it("falls back to the resolved model id for wildcard routes missing from /v1/models", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
@@ -377,7 +377,7 @@ describe("applyDiscovery", () => {
     expect(models["gpt-4o"]).toBeDefined();
   });
 
-  it("normalizes a wildcard id from /v1/models to its resolved model id", async () => {
+  it("preserves a wildcard id from /v1/models", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
@@ -405,7 +405,7 @@ describe("applyDiscovery", () => {
     await applyDiscovery(config);
 
     const models = config.provider?.gateway.models ?? {};
-    expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeDefined();
-    expect(models["claude-opus-4-5*"]).toBeUndefined();
+    expect(models["claude-opus-4-5*"]).toBeDefined();
+    expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeUndefined();
   });
 });

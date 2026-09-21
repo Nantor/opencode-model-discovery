@@ -46,24 +46,17 @@ function entriesForModels(
     if (!info) {
       return { model_name: id, litellm_params: { model: id }, model_info: {} };
     }
-    // A wildcard route id (e.g. "claude-opus-4-5*") matches an info entry;
-    // key the model by its resolved litellm_params.model so the asterisk is
-    // not carried into the config.
-    if (info.model_name.endsWith("*") && info.litellm_params.model) {
-      return { ...info, model_name: info.litellm_params.model };
-    }
     return { ...info, model_name: id };
   });
 
-  // Wildcard routes (e.g. "claude-opus-4-5*") reported by
-  // return_wildcard_routes=true expose their real id only via
-  // litellm_params.model. Ensure each is present under that key so the
-  // claude (and other wildcard) models surface in the config even if
-  // /v1/models does not list them under a usable id.
+  // Wildcard routes missing from /v1/models expose their usable id only via
+  // litellm_params.model. Add those as a fallback, but preserve the exact
+  // route ID when /v1/models already reported it.
   const known = new Set(modelIDs);
   const wildcardTargets = new Set<string>();
   for (const entry of infoEntries) {
     if (!entry.model_name.endsWith("*")) continue;
+    if (known.has(entry.model_name)) continue;
     const target = entry.litellm_params.model;
     if (!target || known.has(target) || wildcardTargets.has(target)) continue;
     wildcardTargets.add(target);
