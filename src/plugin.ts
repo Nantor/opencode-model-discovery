@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 
 import { discoveryCacheKey, parseCacheDuration, readCache, writeCache } from "./cache.js";
 import { fetchModelInfo, fetchModels } from "./fetch.js";
+import { enhanceModelEntry, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
 import { buildProviderConfig } from "./provider.js";
 import type {
   LiteLLMModelInfoEntry,
@@ -192,6 +193,24 @@ export async function discoverProviderModels(
       providerID,
       log,
     );
+
+    if (pluginOptions.enhanceFromModelsDev === true) {
+      const modelsDevData = await getModelsDevData(cacheDurationMs, timeoutMs, log);
+      if (modelsDevData) {
+        for (const entry of discoveredEntries) {
+          const modelEntry = discovered.models?.[entry.model_name];
+          if (!modelEntry) continue;
+          const modelsDevEntry = findModelsDevEntry(
+            modelsDevData,
+            entry.model_info.litellm_provider,
+            entry.litellm_params.model ?? entry.model_name,
+          );
+          if (modelsDevEntry) {
+            enhanceModelEntry(modelEntry, modelsDevEntry);
+          }
+        }
+      }
+    }
 
     provider.models = {
       ...discovered.models,

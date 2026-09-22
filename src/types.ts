@@ -202,6 +202,7 @@ export interface OpenCodeDiscoveryOptions {
   discoveryTimeout?: number;
   discoveryCache?: string;
   modelNameFormat?: string;
+  enhanceFromModelsDev?: boolean;
 }
 
 export interface OpenCodeProvider {
@@ -222,3 +223,56 @@ export interface OpenCodeConfig {
   provider?: Record<string, OpenCodeProvider | undefined>;
   [key: string]: unknown;
 }
+
+// ---------------------------------------------------------------------------
+// models.dev
+// ---------------------------------------------------------------------------
+
+export interface ModelsDevCost {
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+  [key: string]: unknown;
+}
+
+export interface ModelsDevLimit {
+  context?: number;
+  output?: number;
+  input?: number;
+}
+
+export interface ModelsDevModalities {
+  input?: Array<"text" | "audio" | "image" | "video" | "pdf">;
+  output?: Array<"text" | "audio" | "image" | "video" | "pdf">;
+}
+
+export interface ModelsDevModel {
+  id: string;
+  name?: string;
+  family?: string;
+  attachment?: boolean;
+  reasoning?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
+  knowledge?: string;
+  release_date?: string;
+  last_updated?: string;
+  open_weights?: boolean;
+  limit?: ModelsDevLimit;
+  cost?: ModelsDevCost;
+  modalities?: ModelsDevModalities;
+  [key: string]: unknown;
+}
+
+export interface ModelsDevProvider {
+  id: string;
+  name?: string;
+  npm?: string;
+  api?: string;
+  env?: string[];
+  doc?: string;
+  models: Record<string, ModelsDevModel>;
+}
+
+export type ModelsDevData = Record<string, ModelsDevProvider>;

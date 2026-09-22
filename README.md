@@ -38,6 +38,30 @@ When `/v2/model/info` identifies a model as supporting `max_completion_tokens` b
 
 Restart OpenCode after changing plugin or provider configuration.
 
+## models.dev Enhancement
+
+LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, `release_date`, `temperature`, or complete `cost`/`limit`/`modalities` data. Set `enhanceFromModelsDev` to `true` to fill those gaps from the public [models.dev](https://models.dev) catalog:
+
+```json
+{
+  "provider": {
+    "litellm": {
+      "options": {
+        "baseURL": "http://localhost:4000/v1",
+        "opencode-model-discovery": {
+          "discovery": true,
+          "enhanceFromModelsDev": true
+        }
+      }
+    }
+  }
+}
+```
+
+Each discovered model is matched to a models.dev entry using LiteLLM's `litellm_provider` metadata (e.g. `openai`, `azure`, `vertex_ai-anthropic_models`) together with the resolved upstream model id. Only a fixed set of unambiguous provider mappings are used; models routed through a `litellm_provider` without a known mapping are left unmatched rather than guessed. LiteLLM-derived fields always take precedence — models.dev only fills in fields that discovery left `undefined` (for example, adding `family` and `release_date` to a model whose cost and limit were already reported by `/v2/model/info`).
+
+The models.dev catalog is fetched once per discovery run and shared across all providers with `enhanceFromModelsDev` enabled. It respects the same `discoveryCache` and `discoveryTimeout` settings as LiteLLM discovery. A failed or timed-out models.dev fetch is logged as a warning and does not prevent discovery from completing with LiteLLM-only data.
+
 ## System Test
 
 Create an untracked `test.env` containing `baseUrl` and `apiKey`, then run:
@@ -126,7 +150,7 @@ The example might produce `Gpt 4o (gpt-4o) - 128K context [reasoning]`. Missing 
 - Escape a literal single quote in the body as `\'`: `{?name:'it\'s $0'}`.
 - Do not mix `&` and `|` in one conditional expression.
 
-`discovery`, `discoveryTimeout`, `discoveryCache`, and `modelNameFormat` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
+`discovery`, `discoveryTimeout`, `discoveryCache`, `modelNameFormat`, and `enhanceFromModelsDev` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
 

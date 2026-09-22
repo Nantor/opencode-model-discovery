@@ -474,6 +474,128 @@ describe("applyDiscovery", () => {
     expect(models["gpt-4o"]).toBeDefined();
   });
 
+  it("enhances discovered models with models.dev data when enabled", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("models.dev")) {
+        return {
+          ok: true,
+          json: async () => ({
+            openai: {
+              id: "openai",
+              npm: "@ai-sdk/openai",
+              name: "OpenAI",
+              models: {
+                "gpt-4o": {
+                  id: "gpt-4o",
+                  name: "GPT-4o",
+                  family: "gpt",
+                  release_date: "2024-05-13",
+                  temperature: true,
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                },
+              },
+            },
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () =>
+          url.includes("/models")
+            ? { data: [{ id: "gpt-4o" }] }
+            : {
+                data: [
+                  {
+                    model_name: "gpt-4o",
+                    litellm_params: { model: "gpt-4o" },
+                    model_info: {
+                      max_tokens: 128000,
+                      max_output_tokens: 16384,
+                      litellm_provider: "openai",
+                    },
+                  },
+                ],
+              },
+      } as Response;
+    });
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: {
+            baseURL: "https://llm.example.com/v1",
+            "opencode-model-discovery": { discovery: true, enhanceFromModelsDev: true },
+          },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const model = providerFor(config, "gateway").models?.["gpt-4o"];
+    expect(model?.family).toBe("gpt");
+    expect(model?.release_date).toBe("2024-05-13");
+    expect(model?.temperature).toBe(true);
+    // LiteLLM-derived limit must remain untouched by the enhancement pass.
+    expect(model?.limit).toEqual({ context: 128000, output: 16384 });
+  });
+
+  it("does not fetch models.dev when enhanceFromModelsDev is not set", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [{ id: "gpt-4o" }] }
+          : { data: [] },
+    }) as Response);
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    for (const call of vi.mocked(fetch).mock.calls) {
+      expect(call[0]?.toString()).not.toContain("models.dev");
+    }
+  });
+
+  it("continues discovery when models.dev enhancement fails", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("models.dev")) {
+        return { ok: false, status: 500, statusText: "Internal Server Error" } as Response;
+      }
+      return {
+        ok: true,
+        json: async () =>
+          url.includes("/models")
+            ? { data: [{ id: "gpt-4o" }] }
+            : { data: [] },
+      } as Response;
+    });
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: {
+            baseURL: "https://llm.example.com/v1",
+            "opencode-model-discovery": { discovery: true, enhanceFromModelsDev: true },
+          },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    expect(providerFor(config, "gateway").models?.["gpt-4o"]?.name).toBe("Gpt 4o");
+  });
+
   it("preserves a wildcard id from /v1/models", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
