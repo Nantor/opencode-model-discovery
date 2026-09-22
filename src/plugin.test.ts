@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyDiscovery } from "./plugin.js";
-import type { OpenCodeConfig } from "./types.js";
+import type { OpenCodeConfig, OpenCodeProvider } from "./types.js";
+
+function providerFor(config: OpenCodeConfig, id: string): OpenCodeProvider {
+  const provider = config.provider?.[id];
+  expect(provider).toBeDefined();
+  return provider!;
+}
 
 describe("applyDiscovery", () => {
   beforeEach(() => {
@@ -47,17 +53,17 @@ describe("applyDiscovery", () => {
     await applyDiscovery(config);
 
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(config.provider?.enabled.models?.["openai/gpt-4o-mini"]?.name).toBe(
+    expect(providerFor(config, "enabled").models?.["openai/gpt-4o-mini"]?.name).toBe(
       "Gpt 4o Mini",
     );
-    expect(config.provider?.disabled.models).toBeUndefined();
-    expect(config.provider?.enabled.options).not.toHaveProperty("opencode-model-discovery");
+    expect(providerFor(config, "disabled").models).toBeUndefined();
+    expect(providerFor(config, "enabled").options).not.toHaveProperty("opencode-model-discovery");
   });
 
   it("ignores undefined provider entries", async () => {
     const config: OpenCodeConfig = {
       provider: {
-        unavailable: undefined as unknown as OpenCodeConfig["provider"][string],
+        unavailable: undefined,
       },
     };
 
@@ -89,10 +95,10 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    expect(config.provider?.gateway.models?.["openai/gpt-4o-mini"]?.name).toBe(
+    expect(providerFor(config, "gateway").models?.["openai/gpt-4o-mini"]?.name).toBe(
       "Gpt 4o Mini | gateway/openai/gpt-4o-mini",
     );
-    expect(config.provider?.gateway.options).not.toHaveProperty("opencode-model-discovery");
+    expect(providerFor(config, "gateway").options).not.toHaveProperty("opencode-model-discovery");
   });
 
   it("keeps manually configured models over discovered values", async () => {
@@ -115,8 +121,8 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    expect(config.provider?.litellm.models?.["gpt-4o"]?.name).toBe("My GPT");
-    expect(config.provider?.litellm.models?.["claude-3-5-sonnet"]?.name).toBe(
+    expect(providerFor(config, "litellm").models?.["gpt-4o"]?.name).toBe("My GPT");
+    expect(providerFor(config, "litellm").models?.["claude-3-5-sonnet"]?.name).toBe(
       "Claude 3 5 Sonnet",
     );
   });
@@ -141,8 +147,8 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    expect(Object.keys(config.provider?.litellm.models ?? {})).toEqual(["llama3.1:8b"]);
-    expect(config.provider?.litellm.models?.["llama3.1:8b"]?.name).toBe("My Llama");
+    expect(Object.keys(providerFor(config, "litellm").models ?? {})).toEqual(["llama3.1:8b"]);
+    expect(providerFor(config, "litellm").models?.["llama3.1:8b"]?.name).toBe("My Llama");
   });
 
   it("keeps basic discovery when detailed model info fails", async () => {
@@ -166,7 +172,7 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    expect(config.provider?.gateway.models?.["model-a"]?.name).toBe("Model A");
+    expect(providerFor(config, "gateway").models?.["model-a"]?.name).toBe("Model A");
   });
 
   it("ignores malformed detailed model info entries", async () => {
@@ -188,7 +194,7 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    expect(config.provider?.gateway.models?.["model-a"]?.name).toBe("Model A");
+    expect(providerFor(config, "gateway").models?.["model-a"]?.name).toBe("Model A");
   });
 
   it("prefers exact metadata matches over aliases", async () => {
@@ -223,7 +229,7 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    expect(config.provider?.gateway.models?.["gpt-4o"]?.limit).toEqual({
+    expect(providerFor(config, "gateway").models?.["gpt-4o"]?.limit).toEqual({
       context: 128000,
       output: 4096,
     });
@@ -262,7 +268,7 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    const transform = config.provider?.gateway.options?.transformRequestBody as
+    const transform = providerFor(config, "gateway").options?.transformRequestBody as
       | ((body: Record<string, unknown>) => Record<string, unknown>)
       | undefined;
     expect(transform?.({ model: "US-gpt-6-astra", max_tokens: 1000 })).toEqual({
@@ -293,7 +299,54 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    expect(config.provider?.gateway.options).not.toHaveProperty("transformRequestBody");
+    expect(providerFor(config, "gateway").options).not.toHaveProperty("transformRequestBody");
+  });
+
+  it("filters models for endpoint-only APIs", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? {
+              data: [
+                { id: "gpt-4o" },
+                { id: "text-embedding-3-small" },
+                { id: "provider-specific-chat-model" },
+              ],
+            }
+          : {
+              data: [
+                {
+                  model_name: "gpt-4o",
+                  litellm_params: { model: "gpt-4o" },
+                  model_info: { mode: "chat" },
+                },
+                {
+                  model_name: "text-embedding-3-small",
+                  litellm_params: { model: "text-embedding-3-small" },
+                  model_info: { mode: "embedding" },
+                },
+                {
+                  model_name: "provider-specific-chat-model",
+                  litellm_params: { model: "provider-specific-chat-model" },
+                  model_info: { mode: "responses" },
+                },
+              ],
+            },
+    }) as Response);
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    expect(providerFor(config, "gateway").models?.["gpt-4o"]).toBeDefined();
+    expect(providerFor(config, "gateway").models?.["text-embedding-3-small"]).toBeUndefined();
+    expect(providerFor(config, "gateway").models?.["provider-specific-chat-model"]).toBeDefined();
   });
 
   it("times out discovery requests and consumes the timeout option", async () => {
@@ -320,8 +373,8 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    expect(config.provider?.gateway.models).toBeUndefined();
-    expect(config.provider?.gateway.options).not.toHaveProperty("opencode-model-discovery");
+    expect(providerFor(config, "gateway").models).toBeUndefined();
+    expect(providerFor(config, "gateway").options).not.toHaveProperty("opencode-model-discovery");
   });
 
   it("ignores logger failures", async () => {
@@ -371,7 +424,7 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    const models = config.provider?.gateway.models ?? {};
+    const models = providerFor(config, "gateway").models ?? {};
     expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeDefined();
     expect(models["claude-opus-4-5*"]).toBeUndefined();
     expect(models["gpt-4o"]).toBeDefined();
@@ -404,7 +457,7 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    const models = config.provider?.gateway.models ?? {};
+    const models = providerFor(config, "gateway").models ?? {};
     expect(models["claude-opus-4-5*"]).toBeDefined();
     expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeUndefined();
   });

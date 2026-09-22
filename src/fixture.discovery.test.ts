@@ -42,7 +42,7 @@ describe("applyDiscovery with real fixture responses", () => {
     vi.unstubAllGlobals();
   });
 
-  it("discovers models for every id reported by /v1/models", async () => {
+  it("filters endpoint-only models reported by /v1/models", async () => {
     stubFetchFromFixtures();
 
     const config: OpenCodeConfig = {
@@ -58,9 +58,17 @@ describe("applyDiscovery with real fixture responses", () => {
     const models = config?.provider?.gateway?.models ?? {};
     expect(fetch).toHaveBeenCalledTimes(2);
 
+    const endpointOnlyModelIDs = new Set(
+      v2ModelInfo.data
+        .filter((entry) => entry.model_info.mode === "embedding")
+        .map((entry) => entry.model_name),
+    );
     for (const model of v1Models.data) {
+      if (endpointOnlyModelIDs.has(model.id)) continue;
       expect(models[model.id]).toBeDefined();
     }
+    expect(models["qwen-3-vl-embedding-2b-sovereign"]).toBeUndefined();
+    expect(models["gemini-2.5-flash-image"]).toBeDefined();
   });
 
   it("preserves wildcard route ids reported by /v1/models", async () => {
@@ -118,7 +126,7 @@ describe("applyDiscovery with real fixture responses", () => {
     expect(deepseek?.tool_call).toBe(true);
     expect(deepseek?.limit?.input).toBe(220000);
 
-    const imageModel = models["gemini-2.5-flash-image"];
+    const imageModel = models["claude-opus-4-5*"];
     expect(imageModel?.modalities).toEqual({
       input: ["text", "image", "pdf"],
       output: ["text"],

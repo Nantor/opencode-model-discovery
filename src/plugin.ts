@@ -13,6 +13,14 @@ type RequestBodyTransform = (
   body: Record<string, unknown>,
 ) => Record<string, unknown>;
 
+const ENDPOINT_ONLY_MODEL_MODES = new Set([
+  "embedding",
+  "audio_transcription",
+  "audio_speech",
+  "moderation",
+  "rerank",
+]);
+
 async function safeLog(
   log: Logger | undefined,
   level: "info" | "warn" | "error",
@@ -69,6 +77,13 @@ function entriesForModels(
 function usesMaxCompletionTokens(entry: LiteLLMModelInfoEntry): boolean {
   const parameters = entry.model_info.supported_openai_params;
   return parameters?.includes("max_completion_tokens") === true;
+}
+
+function isOpenCodeModel(entry: LiteLLMModelInfoEntry): boolean {
+  const mode = entry.model_info.mode?.toLowerCase();
+  // LiteLLM providers may use custom modes for otherwise chat-capable models.
+  // Exclude only endpoint-specific modes that cannot serve chat completions.
+  return mode === undefined || !ENDPOINT_ONLY_MODEL_MODES.has(mode);
 }
 
 function addMaxCompletionTokensTransform(
@@ -148,7 +163,7 @@ export async function discoverProviderModels(
     const discoveredEntries = entriesForModels(
       models.map((model) => model.id),
       infoEntries,
-    );
+    ).filter(isOpenCodeModel);
     const discovered = buildProviderConfig(
       discoveredEntries,
       options.baseURL,
@@ -167,7 +182,7 @@ export async function discoverProviderModels(
       ...provider.models,
     };
     addMaxCompletionTokensTransform(provider, discoveredEntries);
-    await safeLog(log, "info", `Discovered ${models.length} model(s) for provider "${providerID}"`);
+    await safeLog(log, "info", `Discovered ${discoveredEntries.length} usable model(s) for provider "${providerID}"`);
   } catch (error) {
     await safeLog(
       log,
