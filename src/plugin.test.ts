@@ -1,3 +1,6 @@
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyDiscovery } from "./plugin.js";
@@ -10,12 +13,20 @@ function providerFor(config: OpenCodeConfig, id: string): OpenCodeProvider {
 }
 
 describe("applyDiscovery", () => {
+  let cacheHome: string | undefined;
+
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
+    cacheHome = process.env.XDG_CACHE_HOME;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllGlobals();
+    if (cacheHome === undefined) {
+      delete process.env.XDG_CACHE_HOME;
+    } else {
+      process.env.XDG_CACHE_HOME = cacheHome;
+    }
   });
 
   it("only discovers models for opted-in providers", async () => {
@@ -375,6 +386,39 @@ describe("applyDiscovery", () => {
 
     expect(providerFor(config, "gateway").models).toBeUndefined();
     expect(providerFor(config, "gateway").options).not.toHaveProperty("opencode-model-discovery");
+  });
+
+  it("reuses discovery responses until the configured cache duration expires", async () => {
+    const cacheDirectory = join(tmpdir(), `opencode-model-discovery-${process.pid}-${Date.now()}`);
+    process.env.XDG_CACHE_HOME = cacheDirectory;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [{ id: "cached-model" }] }
+          : { data: [] },
+    }) as Response);
+
+    const config = (): OpenCodeConfig => ({
+      provider: {
+        gateway: {
+          options: {
+            baseURL: "https://cache-test.example.com/v1",
+            "opencode-model-discovery": { discovery: true, discoveryCache: "PT0.02S" },
+          },
+        },
+      },
+    });
+
+    await applyDiscovery(config());
+    await applyDiscovery(config());
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await applyDiscovery(config());
+    expect(fetch).toHaveBeenCalledTimes(4);
+
+    await rm(cacheDirectory, { recursive: true, force: true });
   });
 
   it("ignores logger failures", async () => {

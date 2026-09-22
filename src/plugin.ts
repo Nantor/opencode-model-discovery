@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 
+import { discoveryCacheKey, parseCacheDuration, readCache, writeCache } from "./cache.js";
 import { fetchModelInfo, fetchModels } from "./fetch.js";
 import { buildProviderConfig } from "./provider.js";
 import type {
@@ -148,10 +149,25 @@ export async function discoverProviderModels(
       : undefined;
 
   try {
-    const models = await fetchModels(options.baseURL, options.apiKey, timeoutMs);
+    const cacheDurationMs = parseCacheDuration(pluginOptions.discoveryCache);
+    const modelsCacheKey = discoveryCacheKey("models", options.baseURL, options.apiKey);
+    const infoCacheKey = discoveryCacheKey("model-info", options.baseURL, options.apiKey);
+    const cachedModels = cacheDurationMs === undefined
+      ? undefined
+      : await readCache<Awaited<ReturnType<typeof fetchModels>>>(modelsCacheKey, cacheDurationMs);
+    const models = cachedModels ?? await fetchModels(options.baseURL, options.apiKey, timeoutMs);
+    if (cacheDurationMs !== undefined && cachedModels === undefined) {
+      await writeCache(modelsCacheKey, models);
+    }
     let infoEntries: LiteLLMModelInfoEntry[] = [];
     try {
-      infoEntries = await fetchModelInfo(options.baseURL, options.apiKey, timeoutMs);
+      const cachedInfo = cacheDurationMs === undefined
+        ? undefined
+        : await readCache<LiteLLMModelInfoEntry[]>(infoCacheKey, cacheDurationMs);
+      infoEntries = cachedInfo ?? await fetchModelInfo(options.baseURL, options.apiKey, timeoutMs);
+      if (cacheDurationMs !== undefined && cachedInfo === undefined) {
+        await writeCache(infoCacheKey, infoEntries);
+      }
     } catch (error) {
       await safeLog(
         log,

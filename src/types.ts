@@ -200,6 +200,7 @@ export interface OpenCodeModelEntry {
 export interface OpenCodeDiscoveryOptions {
   discovery?: boolean;
   discoveryTimeout?: number;
+  discoveryCache?: string;
   modelNameFormat?: string;
 }
 

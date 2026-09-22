@@ -19,7 +19,8 @@ Add the plugin and enable discovery on each provider that should be queried:
         "apiKey": "{env:LITELLM_API_KEY}",
         "opencode-model-discovery": {
           "discovery": true,
-          "discoveryTimeout": 10000
+          "discoveryTimeout": 10000,
+          "discoveryCache": "PT1H"
         }
       }
     }
@@ -30,6 +31,8 @@ Add the plugin and enable discovery on each provider that should be queried:
 The plugin fetches `/v1/models?return_wildcard_routes=true` when OpenCode starts and enriches matching models with metadata from `/v2/model/info?return_wildcard_routes=true`. Manually configured model entries take precedence over discovered entries. Provider model IDs are used unchanged as model keys, including spaces and punctuation. Wildcard routes reported by `return_wildcard_routes=true` (e.g. `claude-opus-4-5*`) are kept under their exact route id as reported by `/v1/models`, since LiteLLM's router resolves that literal id back to the deployment behind it. If `/v2/model/info` reports a wildcard route that `/v1/models` did not list, the plugin falls back to surfacing it under its resolved `litellm_params.model` id so the model is not silently dropped.
 
 Discovery requests time out after 10 seconds by default. Set `discoveryTimeout` to a non-negative number of milliseconds to override it. Discovery and metadata failures are logged but do not prevent OpenCode from starting; existing manually configured models remain available.
+
+Set `discoveryCache` to a positive ISO 8601 duration to cache each provider's model list and metadata on disk between OpenCode restarts. For example, `"PT1H"` caches results for one hour, `"P1D"` for one day, and `"P2W"` for two weeks. The cache is disabled by default for invalid or zero durations. Months and years are not supported because their elapsed duration depends on the start date. Cached entries are isolated by endpoint and a hash of the API key, and credentials are not stored in cache files.
 
 When `/v2/model/info` identifies a model as supporting `max_completion_tokens` but not `max_tokens`, the plugin rewrites only that model's completion limit request parameter. This supports a shared LiteLLM proxy where some routed models, such as Azure deployments, reject `max_tokens`. Models without that exact metadata keep the default `max_tokens` parameter.
 
@@ -123,7 +126,7 @@ The example might produce `Gpt 4o (gpt-4o) - 128K context [reasoning]`. Missing 
 - Escape a literal single quote in the body as `\'`: `{?name:'it\'s $0'}`.
 - Do not mix `&` and `|` in one conditional expression.
 
-`discovery`, `discoveryTimeout`, and `modelNameFormat` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
+`discovery`, `discoveryTimeout`, `discoveryCache`, and `modelNameFormat` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
 
