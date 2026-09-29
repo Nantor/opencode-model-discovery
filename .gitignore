@@ -4,3 +4,5 @@ dist/
 dev.env
 opencode.json
 opencode.jsonc
+.idea/
+openapi.json
