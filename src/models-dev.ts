@@ -3,6 +3,7 @@ import type {
   Logger,
   ModelsDevData,
   ModelsDevModel,
+  ModelsDevProvider,
   OpenCodeModelEntry,
 } from "./types.js";
 
@@ -64,6 +65,17 @@ async function safeLog(
   }
 }
 
+function isModelsDevData(value: unknown): value is ModelsDevData {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every(
+    (provider) =>
+      typeof provider === "object" &&
+      provider !== null &&
+      typeof (provider as Partial<ModelsDevProvider>).models === "object" &&
+      (provider as Partial<ModelsDevProvider>).models !== null,
+  );
+}
+
 async function fetchModelsDevData(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ModelsDevData> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -98,7 +110,7 @@ export async function getModelsDevData(
     try {
       const cached = cacheDurationMs === undefined
         ? undefined
-        : await readCache<ModelsDevData>(MODELS_DEV_CACHE_KEY, cacheDurationMs);
+        : await readCache(MODELS_DEV_CACHE_KEY, cacheDurationMs, isModelsDevData);
       if (cached) return cached;
 
       const data = await fetchModelsDevData(timeoutMs);

@@ -35,7 +35,20 @@ function cachePath(key: string): string {
   return join(cacheDirectory(), `${createHash("sha256").update(key).digest("hex")}.json`);
 }
 
-export async function readCache<T>(key: string, durationMs: number): Promise<T | undefined> {
+export function isArrayOf<T>(isItem: (value: unknown) => value is T): (value: unknown) => value is T[] {
+  return (value): value is T[] => Array.isArray(value) && value.every(isItem);
+}
+
+/**
+ * Read a cached value. Entries that are expired, malformed, or whose `value`
+ * fails `isValid` are treated as a cache miss so a corrupted cache file can
+ * never break discovery until it expires.
+ */
+export async function readCache<T>(
+  key: string,
+  durationMs: number,
+  isValid: (value: unknown) => value is T,
+): Promise<T | undefined> {
   try {
     const entry = JSON.parse(await readFile(cachePath(key), "utf8")) as CacheEntry<unknown>;
     if (
@@ -43,11 +56,12 @@ export async function readCache<T>(key: string, durationMs: number): Promise<T |
       entry === null ||
       typeof entry.createdAt !== "number" ||
       !Number.isFinite(entry.createdAt) ||
-      Date.now() - entry.createdAt > durationMs
+      Date.now() - entry.createdAt > durationMs ||
+      !isValid(entry.value)
     ) {
       return undefined;
     }
-    return entry.value as T;
+    return entry.value;
   } catch {
     return undefined;
   }
