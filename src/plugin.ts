@@ -73,18 +73,22 @@ function entriesForModels(
     }
   }
 
-  const resolved: LiteLLMModelInfoEntry[] = modelIDs.map((id) => {
+  const known = new Set<string>();
+  const resolved: LiteLLMModelInfoEntry[] = [];
+  for (const id of modelIDs) {
+    if (known.has(id)) continue;
+    known.add(id);
     const info = byID.get(id);
-    if (!info) {
-      return { model_name: id, litellm_params: { model: id }, model_info: {} };
-    }
-    return { ...info, model_name: id };
-  });
+    resolved.push(
+      info
+        ? { ...info, model_name: id }
+        : { model_name: id, litellm_params: { model: id }, model_info: {} },
+    );
+  }
 
   // Wildcard routes missing from /v1/models expose their usable id only via
   // litellm_params.model. Add those as a fallback, but preserve the exact
   // route ID when /v1/models already reported it.
-  const known = new Set(modelIDs);
   const wildcardTargets = new Set<string>();
   for (const entry of infoEntries) {
     if (!entry.model_name.endsWith("*")) continue;
@@ -219,7 +223,6 @@ export async function discoverProviderModels(
         ? pluginOptions.modelNameFormat
         : undefined,
       providerID,
-      log,
     );
 
     if (pluginOptions.enhanceFromModelsDev === true) {

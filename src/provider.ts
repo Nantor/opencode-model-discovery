@@ -5,7 +5,6 @@ import type {
   OpenCodeModelCost,
   OpenCodeModelEntry,
   OpenCodeProvider,
-  Logger,
 } from "./types.js";
 import { normalizeBaseURL } from "./fetch.js";
 import { sortByKey, toDisplayName } from "./utils.js";
@@ -109,7 +108,6 @@ export function buildProviderConfig(
   applyReasoningSummaryWorkaround = true,
   modelNameFormat?: string,
   providerID = "litellm",
-  log?: Logger,
 ): OpenCodeProvider {
   // Build lookups from model_name → model_info and model_name → litellm_params
   const infoMap = new Map<string, LiteLLMModelInfo>();
@@ -136,7 +134,6 @@ export function buildProviderConfig(
 
   for (const entry of modelInfoEntries) {
     const id = entry.model_name;
-    const key = id;
     const info = infoMap.get(id);
     const params = paramsMap.get(id);
     const modelEntry: OpenCodeModelEntry = {
@@ -263,17 +260,6 @@ export function buildProviderConfig(
       modelEntry.interleaved = { field: "reasoning_content" };
     }
 
-    if (Object.hasOwn(modelsMap, key)) {
-      try {
-        const result = log?.(
-          "warn",
-          `[opencode-model-discovery] Duplicate model key "${key}" (from id "${id}") - previous entry overwritten.`,
-        );
-        if (result) void Promise.resolve(result).catch(() => undefined);
-      } catch {
-        // Logging must never prevent provider initialization.
-      }
-    }
     const normalizedName = toDisplayName(id);
     const formatValues: OpenCodeModelEntry = {
       ...modelEntry,
@@ -283,7 +269,7 @@ export function buildProviderConfig(
     modelEntry.name = modelNameFormat !== undefined
       ? formatModelName(modelNameFormat, formatValues, providerID)
       : normalizedName;
-    modelsMap[key] = modelEntry;
+    modelsMap[id] = modelEntry;
   }
 
   const provider: OpenCodeProvider = {

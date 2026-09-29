@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 
 import { buildProviderConfig } from "./provider.js";
 
@@ -434,49 +434,6 @@ describe("buildProviderConfig", () => {
     expect(config.models?.["test-model"]?.cost).toBeUndefined();
   });
 
-  it("warns and overwrites duplicate model ids", () => {
-    const log = vi.fn();
-    const entries = [
-      { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
-      { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
-    ];
-    const config = buildProviderConfig(
-      entries,
-      "http://localhost:4000",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      log,
-    );
-    expect(Object.keys(config.models ?? {})).toHaveLength(1);
-    expect(config.models?.["my-model"]).toBeDefined();
-    expect(log).toHaveBeenCalledOnce();
-    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("my-model"));
-  });
-
-  it("ignores rejected duplicate warnings", async () => {
-    const entries = [
-      { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
-      { model_name: "my-model", litellm_params: { model: "my-model" }, model_info: {} },
-    ];
-
-    expect(() =>
-      buildProviderConfig(
-        entries,
-        "http://localhost:4000",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        async () => Promise.reject(new Error("logger offline")),
-      ),
-    ).not.toThrow();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-
   it("keeps prototype-sensitive model ids", () => {
     const entries = [
       { model_name: "__proto__", litellm_params: { model: "__proto__" }, model_info: {} },
@@ -531,24 +488,13 @@ describe("buildProviderConfig", () => {
   });
 
   it("does not collide distinct ids that previously sanitized to the same key", () => {
-    const log = vi.fn();
     const entries = [
       { model_name: "my model", litellm_params: { model: "my model" }, model_info: {} },
       { model_name: "my_model", litellm_params: { model: "my_model" }, model_info: {} },
     ];
-    const config = buildProviderConfig(
-      entries,
-      "http://localhost:4000",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      log,
-    );
+    const config = buildProviderConfig(entries, "http://localhost:4000");
     expect(Object.keys(config.models ?? {})).toHaveLength(2);
     expect(config.models?.["my model"]).toBeDefined();
     expect(config.models?.my_model).toBeDefined();
-    expect(log).not.toHaveBeenCalled();
   });
 });
