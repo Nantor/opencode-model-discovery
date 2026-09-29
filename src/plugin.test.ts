@@ -361,6 +361,7 @@ describe("applyDiscovery", () => {
               data: [
                 { id: "gpt-4o" },
                 { id: "text-embedding-3-small" },
+                { id: "gpt-image-1" },
                 { id: "provider-specific-chat-model" },
               ],
             }
@@ -375,6 +376,11 @@ describe("applyDiscovery", () => {
                   model_name: "text-embedding-3-small",
                   litellm_params: { model: "text-embedding-3-small" },
                   model_info: { mode: "embedding" },
+                },
+                {
+                  model_name: "gpt-image-1",
+                  litellm_params: { model: "gpt-image-1" },
+                  model_info: { mode: "image_generation" },
                 },
                 {
                   model_name: "provider-specific-chat-model",
@@ -396,6 +402,7 @@ describe("applyDiscovery", () => {
 
     expect(providerFor(config, "gateway").models?.["gpt-4o"]).toBeDefined();
     expect(providerFor(config, "gateway").models?.["text-embedding-3-small"]).toBeUndefined();
+    expect(providerFor(config, "gateway").models?.["gpt-image-1"]).toBeUndefined();
     expect(providerFor(config, "gateway").models?.["provider-specific-chat-model"]).toBeDefined();
   });
 

@@ -15,12 +15,22 @@ type RequestBodyTransform = (
   body: Record<string, unknown>,
 ) => Record<string, unknown>;
 
+// LiteLLM `model_info.mode` values that can never serve /chat/completions.
+// `chat`, `completion` and `responses` are deliberately absent: LiteLLM
+// routes chat requests to those deployments.
 const ENDPOINT_ONLY_MODEL_MODES = new Set([
   "embedding",
   "audio_transcription",
   "audio_speech",
   "moderation",
+  "moderations",
   "rerank",
+  "image_generation",
+  "image_edit",
+  "video_generation",
+  "ocr",
+  "realtime",
+  "batch",
 ]);
 
 async function safeLog(

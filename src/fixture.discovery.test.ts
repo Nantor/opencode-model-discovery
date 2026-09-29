@@ -60,7 +60,7 @@ describe("applyDiscovery with real fixture responses", () => {
 
     const endpointOnlyModelIDs = new Set(
       v2ModelInfo.data
-        .filter((entry) => entry.model_info.mode === "embedding")
+        .filter((entry) => ["embedding", "image_generation"].includes(entry.model_info.mode ?? ""))
         .map((entry) => entry.model_name),
     );
     for (const model of v1Models.data) {
@@ -68,7 +68,9 @@ describe("applyDiscovery with real fixture responses", () => {
       expect(models[model.id]).toBeDefined();
     }
     expect(models["qwen-3-vl-embedding-2b-sovereign"]).toBeUndefined();
-    expect(models["gemini-2.5-flash-image"]).toBeDefined();
+    expect(models["gemini-2.5-flash-image"]).toBeUndefined();
+    expect(models["gpt-image-1.5"]).toBeUndefined();
+    expect(models["US-gpt-5.3-codex"]).toBeDefined();
   });
 
   it("preserves wildcard route ids reported by /v1/models", async () => {
