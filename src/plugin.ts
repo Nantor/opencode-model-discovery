@@ -262,11 +262,23 @@ export async function applyDiscovery(
   config: OpenCodeConfig,
   log?: Logger,
 ): Promise<void> {
-  await Promise.all(
+  // discoverProviderModels catches its own errors, but one provider must
+  // never be able to abort discovery for the others or block startup.
+  const results = await Promise.allSettled(
     Object.entries(config.provider ?? {}).map(([providerID, provider]) =>
       discoverProviderModels(providerID, provider, log),
     ),
   );
+  const providerIDs = Object.keys(config.provider ?? {});
+  for (const [index, result] of results.entries()) {
+    if (result.status === "rejected") {
+      await safeLog(
+        log,
+        "error",
+        `Model discovery failed for "${providerIDs[index]}": ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+      );
+    }
+  }
 }
 
 export const ModelDiscoveryPlugin: Plugin = async ({ client }) => {
