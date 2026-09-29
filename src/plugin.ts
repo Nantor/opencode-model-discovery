@@ -182,6 +182,13 @@ export async function discoverProviderModels(
 
   try {
     const cacheDurationMs = parseCacheDuration(pluginOptions.discoveryCache);
+    if (pluginOptions.discoveryCache !== undefined && cacheDurationMs === undefined) {
+      await safeLog(
+        log,
+        "warn",
+        `Ignoring invalid discoveryCache "${String(pluginOptions.discoveryCache)}" for provider "${providerID}": expected a positive ISO 8601 duration such as "PT1H" or "P1D" (months and years are not supported)`,
+      );
+    }
     const modelsCacheKey = discoveryCacheKey("models", discoveryBaseURL, options.apiKey);
     const infoCacheKey = discoveryCacheKey("model-info", discoveryBaseURL, options.apiKey);
     const cachedModels = cacheDurationMs === undefined

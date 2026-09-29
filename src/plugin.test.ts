@@ -110,6 +110,32 @@ describe("applyDiscovery", () => {
     expect(providerFor(config, "gateway").options).not.toHaveProperty("opencode-model-discovery");
   });
 
+  it("warns about an invalid discoveryCache value and discovers without caching", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [{ id: "gpt-4o" }] }
+          : { data: [] },
+    }) as Response);
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: {
+            baseURL: "https://llm.example.com/v1",
+            "opencode-model-discovery": { discovery: true, discoveryCache: "1h" },
+          },
+        },
+      },
+    };
+    const log = vi.fn();
+
+    await applyDiscovery(config, log);
+
+    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining('Ignoring invalid discoveryCache "1h"'));
+    expect(providerFor(config, "gateway").models?.["gpt-4o"]).toBeDefined();
+  });
+
   it("de-duplicates model ids repeated by /v1/models", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
