@@ -14,7 +14,7 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
-      // Explicit return types help readability in a CLI tool
+      // Explicit return types keep the public plugin surface readable
       "@typescript-eslint/explicit-function-return-type": [
         "warn",
         { allowExpressions: true },
