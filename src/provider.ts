@@ -96,6 +96,11 @@ function formatCompactNumber(value: number): string {
   return Number(scaled.toPrecision(3)).toString() + suffixes[suffixIndex];
 }
 
+function toPerMillion(perToken: unknown): number | undefined {
+  const value = toNum(perToken);
+  return value === undefined ? undefined : value * 1_000_000;
+}
+
 export function buildProviderConfig(
   modelInfoEntries: LiteLLMModelInfoEntry[],
   baseURL: string,
@@ -158,15 +163,9 @@ export function buildProviderConfig(
         modelEntry.limit = limit;
       }
 
-      // --- cost (per-token pricing in USD) ---
-      const inputCost =
-        toNum(info.input_cost_per_token) !== undefined
-          ? toNum(info.input_cost_per_token!)! * 1_000_000
-          : undefined;
-      const outputCost =
-        toNum(info.output_cost_per_token) !== undefined
-          ? toNum(info.output_cost_per_token!)! * 1_000_000
-          : undefined;
+      // --- cost (LiteLLM reports USD per token; OpenCode expects USD per 1M tokens) ---
+      const inputCost = toPerMillion(info.input_cost_per_token);
+      const outputCost = toPerMillion(info.output_cost_per_token);
 
       if (inputCost !== undefined && outputCost !== undefined) {
         const cost: OpenCodeModelCost = {
@@ -174,42 +173,26 @@ export function buildProviderConfig(
           output: outputCost,
         };
 
-        if (toNum(info.cache_read_input_token_cost) !== undefined) {
-          cost.cache_read =
-            toNum(info.cache_read_input_token_cost!)! * 1_000_000;
-        }
-        if (toNum(info.cache_creation_input_token_cost) !== undefined) {
-          cost.cache_write =
-            toNum(info.cache_creation_input_token_cost!)! * 1_000_000;
-        }
+        const cacheRead = toPerMillion(info.cache_read_input_token_cost);
+        if (cacheRead !== undefined) cost.cache_read = cacheRead;
+        const cacheWrite = toPerMillion(info.cache_creation_input_token_cost);
+        if (cacheWrite !== undefined) cost.cache_write = cacheWrite;
 
         // context_over_200k pricing tiers
-        const inputOver200k = toNum(
-          info.input_cost_per_token_above_200k_tokens,
-        );
-        const outputOver200k = toNum(
-          info.output_cost_per_token_above_200k_tokens,
-        );
+        const inputOver200k = toPerMillion(info.input_cost_per_token_above_200k_tokens);
+        const outputOver200k = toPerMillion(info.output_cost_per_token_above_200k_tokens);
         if (inputOver200k !== undefined && outputOver200k !== undefined) {
           cost.context_over_200k = {
-            input: inputOver200k * 1_000_000,
-            output: outputOver200k * 1_000_000,
+            input: inputOver200k,
+            output: outputOver200k,
           };
-          if (
-            toNum(info.cache_read_input_token_cost_above_200k_tokens) !==
-            undefined
-          ) {
-            cost.context_over_200k.cache_read =
-              toNum(info.cache_read_input_token_cost_above_200k_tokens!)! *
-              1_000_000;
+          const cacheReadOver200k = toPerMillion(info.cache_read_input_token_cost_above_200k_tokens);
+          if (cacheReadOver200k !== undefined) {
+            cost.context_over_200k.cache_read = cacheReadOver200k;
           }
-          if (
-            toNum(info.cache_creation_input_token_cost_above_200k_tokens) !==
-            undefined
-          ) {
-            cost.context_over_200k.cache_write =
-              toNum(info.cache_creation_input_token_cost_above_200k_tokens!)! *
-              1_000_000;
+          const cacheWriteOver200k = toPerMillion(info.cache_creation_input_token_cost_above_200k_tokens);
+          if (cacheWriteOver200k !== undefined) {
+            cost.context_over_200k.cache_write = cacheWriteOver200k;
           }
         }
 
