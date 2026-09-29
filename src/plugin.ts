@@ -142,6 +142,11 @@ export async function discoverProviderModels(
     return;
   }
 
+  const discoveryBaseURL =
+    typeof pluginOptions.discoveryBaseURL === "string"
+      ? pluginOptions.discoveryBaseURL
+      : options.baseURL;
+
   const timeoutMs =
     typeof pluginOptions.discoveryTimeout === "number" &&
     Number.isFinite(pluginOptions.discoveryTimeout) &&
@@ -151,12 +156,12 @@ export async function discoverProviderModels(
 
   try {
     const cacheDurationMs = parseCacheDuration(pluginOptions.discoveryCache);
-    const modelsCacheKey = discoveryCacheKey("models", options.baseURL, options.apiKey);
-    const infoCacheKey = discoveryCacheKey("model-info", options.baseURL, options.apiKey);
+    const modelsCacheKey = discoveryCacheKey("models", discoveryBaseURL, options.apiKey);
+    const infoCacheKey = discoveryCacheKey("model-info", discoveryBaseURL, options.apiKey);
     const cachedModels = cacheDurationMs === undefined
       ? undefined
       : await readCache<Awaited<ReturnType<typeof fetchModels>>>(modelsCacheKey, cacheDurationMs);
-    const models = cachedModels ?? await fetchModels(options.baseURL, options.apiKey, timeoutMs);
+    const models = cachedModels ?? await fetchModels(discoveryBaseURL, options.apiKey, timeoutMs);
     if (cacheDurationMs !== undefined && cachedModels === undefined) {
       await writeCache(modelsCacheKey, models);
     }
@@ -165,7 +170,7 @@ export async function discoverProviderModels(
       const cachedInfo = cacheDurationMs === undefined
         ? undefined
         : await readCache<LiteLLMModelInfoEntry[]>(infoCacheKey, cacheDurationMs);
-      infoEntries = cachedInfo ?? await fetchModelInfo(options.baseURL, options.apiKey, timeoutMs);
+      infoEntries = cachedInfo ?? await fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs);
       if (cacheDurationMs !== undefined && cachedInfo === undefined) {
         await writeCache(infoCacheKey, infoEntries);
       }

@@ -32,6 +32,26 @@ The plugin fetches `/v1/models?return_wildcard_routes=true` when OpenCode starts
 
 Discovery requests time out after 10 seconds by default. Set `discoveryTimeout` to a non-negative number of milliseconds to override it. Discovery and metadata failures are logged but do not prevent OpenCode from starting; existing manually configured models remain available.
 
+By default, discovery requests use the provider's `baseURL`. Set `discoveryBaseURL` when the discovery endpoints are hosted separately from the endpoint used for model requests. It may include `/v1`:
+
+```json
+{
+  "provider": {
+    "gateway": {
+      "options": {
+        "baseURL": "https://inference.example.com/v1",
+        "opencode-model-discovery": {
+          "discovery": true,
+          "discoveryBaseURL": "https://discovery.example.com/v1"
+        }
+      }
+    }
+  }
+}
+```
+
+Discovered models continue to use `baseURL` for inference requests.
+
 Set `discoveryCache` to a positive ISO 8601 duration to cache each provider's model list and metadata on disk between OpenCode restarts. For example, `"PT1H"` caches results for one hour, `"P1D"` for one day, and `"P2W"` for two weeks. The cache is disabled by default for invalid or zero durations. Months and years are not supported because their elapsed duration depends on the start date. Cached entries are isolated by endpoint and a hash of the API key, and credentials are not stored in cache files.
 
 When `/v2/model/info` identifies a model as supporting `max_completion_tokens` but not `max_tokens`, the plugin rewrites only that model's completion limit request parameter. This supports a shared LiteLLM proxy where some routed models, such as Azure deployments, reject `max_tokens`. Models without that exact metadata keep the default `max_tokens` parameter.
@@ -150,7 +170,7 @@ The example might produce `Gpt 4o (gpt-4o) - 128K context [reasoning]`. Missing 
 - Escape a literal single quote in the body as `\'`: `{?name:'it\'s $0'}`.
 - Do not mix `&` and `|` in one conditional expression.
 
-`discovery`, `discoveryTimeout`, `discoveryCache`, `modelNameFormat`, and `enhanceFromModelsDev` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
+`discovery`, `discoveryBaseURL`, `discoveryTimeout`, `discoveryCache`, `modelNameFormat`, and `enhanceFromModelsDev` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
 

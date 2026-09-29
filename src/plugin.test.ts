@@ -71,6 +71,45 @@ describe("applyDiscovery", () => {
     expect(providerFor(config, "enabled").options).not.toHaveProperty("opencode-model-discovery");
   });
 
+  it("uses discoveryBaseURL for discovery while preserving baseURL for model requests", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [{ id: "gpt-4o" }] }
+          : { data: [] },
+    }) as Response);
+
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: {
+            baseURL: "https://inference.example.com/v1",
+            "opencode-model-discovery": {
+              discovery: true,
+              discoveryBaseURL: "https://discovery.example.com/v1",
+            },
+          },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    expect(fetch).toHaveBeenCalledWith(
+      "https://discovery.example.com/v1/models?return_wildcard_routes=true",
+      expect.any(Object),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "https://discovery.example.com/v2/model/info?return_wildcard_routes=true",
+      expect.any(Object),
+    );
+    expect(providerFor(config, "gateway").options?.baseURL).toBe(
+      "https://inference.example.com/v1",
+    );
+    expect(providerFor(config, "gateway").options).not.toHaveProperty("opencode-model-discovery");
+  });
+
   it("ignores undefined provider entries", async () => {
     const config: OpenCodeConfig = {
       provider: {
