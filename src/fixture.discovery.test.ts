@@ -114,7 +114,7 @@ describe("applyDiscovery with real fixture responses", () => {
 
     const gpt4o = models["gpt-4o"];
     expect(gpt4o?.limit).toEqual({
-      context: 16384,
+      context: 128000,
       output: 16384,
       input: 128000,
     });

@@ -94,8 +94,8 @@ describe("buildProviderConfig", () => {
           model_name: "gpt-4o",
           litellm_params: { model: "gpt-4o" },
           model_info: {
-            max_tokens: 1_048_576,
-            max_input_tokens: 128_000,
+            max_tokens: 16_384,
+            max_input_tokens: 1_048_576,
             max_output_tokens: 16_384,
             input_cost_per_token: 0.0000027555,
             output_cost_per_token: 0.00001651,
@@ -110,7 +110,7 @@ describe("buildProviderConfig", () => {
     );
 
     expect(config.models?.["gpt-4o"]?.name).toBe(
-      "Gpt 4o (2.76↑ 16.51↓)[128K↑ 16.4K↓ 1.05M↻]",
+      "Gpt 4o (2.76↑ 16.51↓)[1.05M↑ 16.4K↓ 1.05M↻]",
     );
   });
 
@@ -234,8 +234,8 @@ describe("buildProviderConfig", () => {
       "http://localhost:4000",
     );
     const entry = config.models?.["gpt-4o"];
-    // limit: context → max_tokens, input → max_input_tokens, output → max_output_tokens
-    expect(entry?.limit).toEqual({ context: 128000, input: 127000, output: 100000 });
+    // limit: context → max_input_tokens (max_tokens is an output alias), output → max_output_tokens
+    expect(entry?.limit).toEqual({ context: 127000, input: 127000, output: 100000 });
     // cost: input/output per-token costs (litellm per-token × 1M → per-million)
     expect(entry?.cost).toEqual({ input: 3, output: 15 });
     // vision → attachment + image in input modalities
@@ -264,8 +264,8 @@ describe("buildProviderConfig", () => {
       "http://localhost:4000",
     );
     const entry = config.models?.["gpt-4o-proxy"];
-    // context → max_tokens, input → max_input_tokens, output → max_output_tokens
-    expect(entry?.limit).toEqual({ context: 64000, input: 63000, output: 50000 });
+    // context → max_input_tokens, output → max_output_tokens
+    expect(entry?.limit).toEqual({ context: 63000, input: 63000, output: 50000 });
     expect(entry?.cost?.input).toBe(2);
   });
 
@@ -365,7 +365,7 @@ describe("buildProviderConfig", () => {
     );
     const entry = config.models?.["gpt-4o"];
     // Must use first entry's info (model_name === "gpt-4o"), not the alias's info.
-    expect(entry?.limit).toEqual({ context: 128000, input: 127000, output: 4096 });
+    expect(entry?.limit).toEqual({ context: 127000, input: 127000, output: 4096 });
     expect(entry?.cost?.input).toBe(5);
   });
 

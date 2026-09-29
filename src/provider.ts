@@ -140,9 +140,12 @@ export function buildProviderConfig(
 
     if (info) {
       // --- limit (context window / token counts) ---
-      const contextTokens = toNum(info.max_tokens);
+      // LiteLLM's `max_tokens` is a legacy alias for `max_output_tokens`, not
+      // the context window. The context window is `max_input_tokens`; fall
+      // back to `max_tokens` only when LiteLLM did not report an input limit.
       const inputTokens = toNum(info.max_input_tokens);
-      const outputTokens = toNum(info.max_output_tokens);
+      const outputTokens = toNum(info.max_output_tokens) ?? toNum(info.max_tokens);
+      const contextTokens = inputTokens ?? toNum(info.max_tokens);
 
       if (contextTokens !== undefined && outputTokens !== undefined) {
         const limit: { context: number; output: number; input?: number } = {
