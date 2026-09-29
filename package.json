@@ -24,11 +24,9 @@
     "test:run": "vitest run src",
     "prepublishOnly": "npm run lint && npm run test:run && npm run build"
   },
-  "dependencies": {
-    "@opencode-ai/plugin": "^1.18.25"
-  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@opencode-ai/plugin": "^1.18.25",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.4.0",
