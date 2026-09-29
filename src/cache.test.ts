@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -62,6 +62,19 @@ describe("readCache / writeCache", () => {
     const [file] = await readdir(cacheDirectory);
     await writeFile(join(cacheDirectory, file), "{not json", "utf8");
     await expect(readCache("key", 60_000, isNumberArray)).resolves.toBeUndefined();
+  });
+
+  it("removes the temporary file when the write cannot be completed", async () => {
+    // Pre-create the final path as a directory so rename() fails.
+    await writeCache("probe", [1]);
+    const cacheDirectory = join(directory, "opencode-model-discovery");
+    const [probe] = await readdir(cacheDirectory);
+    await rm(join(cacheDirectory, probe));
+    await mkdir(join(cacheDirectory, probe));
+
+    await writeCache("probe", [2]);
+
+    await expect(readdir(cacheDirectory)).resolves.toEqual([probe]);
   });
 
   it("treats an expired entry as a cache miss", async () => {

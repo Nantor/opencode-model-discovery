@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -78,7 +78,9 @@ export async function writeCache<T>(key: string, value: T): Promise<void> {
     await writeFile(temporaryPath, JSON.stringify(entry), "utf8");
     await rename(temporaryPath, path);
   } catch {
-    // Cache failures must never prevent model discovery.
+    // Cache failures must never prevent model discovery, but do not leave
+    // half-written temporary files behind.
+    await unlink(temporaryPath).catch(() => undefined);
   }
 }
 
