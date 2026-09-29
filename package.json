@@ -5,10 +5,8 @@
   "license": "MIT",
   "type": "module",
   "main": "./dist/opencode-model-discovery.js",
-  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
       "import": "./dist/opencode-model-discovery.js"
     }
   },
@@ -17,7 +15,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/opencode-model-discovery.js && tsc --declaration --emitDeclarationOnly --outDir dist",
+    "build": "rimraf dist && tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/opencode-model-discovery.js",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test": "vitest src",
