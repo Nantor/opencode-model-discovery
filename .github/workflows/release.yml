@@ -20,7 +20,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7.0.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
@@ -42,6 +42,10 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Lint
+        if: steps.tag.outputs.exists == 'false'
+        run: npm run lint
 
       - name: Run tests
         if: steps.tag.outputs.exists == 'false'
