@@ -250,4 +250,24 @@ describe("getModelsDevData", () => {
     expect(result2).toEqual(sampleData);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("does not share in-flight results across different cache durations", async () => {
+    const cacheDirectory = join(tmpdir(), `opencode-model-discovery-mdev-${process.pid}-${Date.now()}`);
+    process.env.XDG_CACHE_HOME = cacheDirectory;
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => sampleData,
+    } as Response);
+
+    const [first, second] = await Promise.all([
+      getModelsDevData(60_000, undefined),
+      getModelsDevData(1, undefined),
+    ]);
+
+    expect(first).toEqual(sampleData);
+    expect(second).toEqual(sampleData);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    await rm(cacheDirectory, { recursive: true, force: true });
+  });
 });

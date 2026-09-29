@@ -91,9 +91,12 @@ async function fetchModelsDevData(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Model
 }
 
 // De-duplicates concurrent in-process fetches when several providers opt
-// into enhancement within the same discovery run. Cleared once the fetch
-// settles so later, independent discovery runs re-check the disk cache.
-let inFlightFetch: Promise<ModelsDevData | undefined> | undefined;
+// into enhancement within the same discovery run. Keyed by cache duration:
+// the on-disk cache file is shared, so a provider with a shorter
+// `discoveryCache` must not be handed a result another provider accepted
+// under a longer freshness window. Cleared once the fetch settles so later,
+// independent discovery runs re-check the disk cache.
+const inFlightFetches = new Map<number | undefined, Promise<ModelsDevData | undefined>>();
 
 /**
  * Fetch models.dev's model catalog, using an on-disk cache (when
@@ -104,7 +107,8 @@ export async function getModelsDevData(
   timeoutMs: number | undefined,
   log?: Logger,
 ): Promise<ModelsDevData | undefined> {
-  if (inFlightFetch) return inFlightFetch;
+  const inFlight = inFlightFetches.get(cacheDurationMs);
+  if (inFlight) return inFlight;
 
   const promise = (async (): Promise<ModelsDevData | undefined> => {
     try {
@@ -128,11 +132,11 @@ export async function getModelsDevData(
     }
   })();
 
-  inFlightFetch = promise;
+  inFlightFetches.set(cacheDurationMs, promise);
   try {
     return await promise;
   } finally {
-    inFlightFetch = undefined;
+    inFlightFetches.delete(cacheDurationMs);
   }
 }
 
