@@ -28,7 +28,15 @@ Add the plugin and enable discovery on each provider that should be queried:
 }
 ```
 
-The plugin fetches `/v1/models?return_wildcard_routes=true` when OpenCode starts and enriches matching models with metadata from `/v2/model/info?return_wildcard_routes=true`. Manually configured model entries take precedence over discovered entries. Provider model IDs are used unchanged as model keys, including spaces and punctuation. Wildcard routes reported by `return_wildcard_routes=true` (e.g. `claude-opus-4-5*`) are kept under their exact route id as reported by `/v1/models`, since LiteLLM's router resolves that literal id back to the deployment behind it. If `/v2/model/info` reports a wildcard route that `/v1/models` did not list, the plugin falls back to surfacing it under its resolved `litellm_params.model` id so the model is not silently dropped.
+The plugin fetches `/v1/models?return_wildcard_routes=true` when OpenCode starts and enriches matching models with metadata from `/v2/model/info?return_wildcard_routes=true`. Manually configured model entries take precedence over discovered entries. Provider model IDs are used unchanged as model keys, including spaces and punctuation. Models whose LiteLLM `mode` cannot serve chat completions (embedding, image and video generation, audio, moderation, rerank, OCR, realtime, batch) are skipped.
+
+Model limits map LiteLLM's `max_input_tokens` to `limit.context` and `max_output_tokens` to `limit.output`. LiteLLM's `max_tokens` field is a legacy alias for the output limit and is only used when the dedicated fields are absent.
+
+### Wildcard routes
+
+Wildcard routes reported by `return_wildcard_routes=true` (e.g. `claude-opus-4-5*`) are kept under their exact route id as reported by `/v1/models`, since LiteLLM's router resolves that literal id back to the deployment behind it. If `/v2/model/info` reports a wildcard route that `/v1/models` did not list, the plugin falls back to surfacing it under its resolved `litellm_params.model` id (e.g. `vertex_ai/claude-opus-4-5@20251101`) so the model is not silently dropped.
+
+That fallback relies on LiteLLM's router accepting a deployment name (`litellm_params.model`) as the request model: when the requested model matches no `model_name` and no wildcard pattern, the router looks for deployments whose `litellm_params.model` equals the request (`Router._get_deployment_by_litellm_model`). This works on a default proxy, but requests may still be rejected if the key or team is restricted to specific model names, or if an access group filter removes the deployment. If a fallback model returns "model not found", ask the proxy operator to expose the route in `/v1/models` or add an explicit model entry with the route id you can call.
 
 Discovery requests time out after 10 seconds by default. Set `discoveryTimeout` to a non-negative number of milliseconds to override it. Discovery and metadata failures are logged but do not prevent OpenCode from starting; existing manually configured models remain available.
 
@@ -50,9 +58,9 @@ By default, discovery requests use the provider's `baseURL`. Set `discoveryBaseU
 }
 ```
 
-Discovered models continue to use `baseURL` for inference requests.
+Discovered models continue to use `baseURL` for inference requests. `baseURL` is always required: discovery is skipped with a warning when only `discoveryBaseURL` is set, because the plugin has no endpoint to hand discovered models to.
 
-Set `discoveryCache` to a positive ISO 8601 duration to cache each provider's model list and metadata on disk between OpenCode restarts. For example, `"PT1H"` caches results for one hour, `"P1D"` for one day, and `"P2W"` for two weeks. The cache is disabled by default for invalid or zero durations. Months and years are not supported because their elapsed duration depends on the start date. Cached entries are isolated by endpoint and a hash of the API key, and credentials are not stored in cache files.
+Set `discoveryCache` to a positive ISO 8601 duration to cache each provider's model list and metadata on disk between OpenCode restarts. For example, `"PT1H"` caches results for one hour, `"P1D"` for one day, and `"P2W"` for two weeks. The cache is disabled by default; invalid or zero durations are logged as a warning and also disable it. Months and years are not supported because their elapsed duration depends on the start date. Cached entries are isolated by endpoint and a hash of the API key, and credentials are not stored in cache files. Cache files live under `$XDG_CACHE_HOME/opencode-model-discovery` (or `~/.cache/opencode-model-discovery`); entries that are expired or malformed are ignored and refetched.
 
 When `/v2/model/info` identifies a model as supporting `max_completion_tokens` but not `max_tokens`, the plugin rewrites only that model's completion limit request parameter. This supports a shared LiteLLM proxy where some routed models, such as Azure deployments, reject `max_tokens`. Models without that exact metadata keep the default `max_tokens` parameter.
 
@@ -81,22 +89,6 @@ LiteLLM's `/v2/model/info` does not always report every field OpenCode understan
 Each discovered model is matched to a models.dev entry using LiteLLM's `litellm_provider` metadata (e.g. `openai`, `azure`, `vertex_ai-anthropic_models`) together with the resolved upstream model id. Only a fixed set of unambiguous provider mappings are used; models routed through a `litellm_provider` without a known mapping are left unmatched rather than guessed. LiteLLM-derived fields always take precedence — models.dev only fills in fields that discovery left `undefined` (for example, adding `family` and `release_date` to a model whose cost and limit were already reported by `/v2/model/info`).
 
 The models.dev catalog is fetched once per discovery run and shared across all providers with `enhanceFromModelsDev` enabled. It respects the same `discoveryCache` and `discoveryTimeout` settings as LiteLLM discovery. A failed or timed-out models.dev fetch is logged as a warning and does not prevent discovery from completing with LiteLLM-only data.
-
-## System Test
-
-Create an untracked `test.env` containing `baseUrl` and `apiKey`, then run:
-
-```bash
-npm run test:system
-```
-
-To run one discovered model, set `SYSTEM_TEST_MODEL`:
-
-```bash
-SYSTEM_TEST_MODEL=US-gpt-6-astra npm run test:system
-```
-
-The system-test launcher starts OpenCode with a temporary inline configuration that loads this plugin and discovers every model exposed by that LiteLLM endpoint. It then registers one Vitest case per discovered model; each invokes `opencode run` with `Return just 1`, forces OpenCode's output budget to one token, and expects exactly `1`. Each model has a five-minute execution limit; set `SYSTEM_TEST_TIMEOUT_MS` to override it. This exercises OpenCode's plugin loading, discovery hook, AI SDK adapter, and request transform, including the discovered `max_completion_tokens` compatibility handling. The launcher exits successfully without running tests when `test.env` is absent or does not define both variables.
 
 ## Resolved Configuration
 
