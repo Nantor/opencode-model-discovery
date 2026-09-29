@@ -125,6 +125,16 @@ function addMaxCompletionTokensTransform(
   );
   if (modelIDs.size === 0) return;
 
+  // `transformRequestBody` is the request hook of @ai-sdk/openai-compatible.
+  // OpenCode forwards `provider.options` to the adapter factory verbatim, and
+  // its config merge preserves function references, so the function survives
+  // to `createOpenAICompatible(...)`. JSON config cannot carry functions, so
+  // an existing transform can only come from another plugin that ran before
+  // this one; chain it rather than replace it.
+  //
+  // Alternative if this coupling ever breaks: wrap `provider.options.fetch`
+  // (explicitly supported by OpenCode for any adapter) and rewrite the JSON
+  // body there.
   const existingTransform = provider.options?.transformRequestBody;
   const transform = typeof existingTransform === "function"
     ? existingTransform as RequestBodyTransform
