@@ -87,6 +87,25 @@ describe("buildProviderConfig", () => {
     );
   });
 
+  it("does not resolve inherited properties in placeholders", () => {
+    const config = buildProviderConfig(
+      [
+        {
+          model_name: "gpt-4o",
+          litellm_params: { model: "gpt-4o" },
+          model_info: {},
+        },
+      ],
+      "http://localhost:4000",
+      undefined,
+      "LiteLLM",
+      false,
+      "{name}|{__proto__}|{constructor}|{name.length}|{name.toString}",
+    );
+
+    expect(config.models?.["gpt-4o"]?.name).toBe("Gpt 4o||||");
+  });
+
   it("formats cost and limit placeholders compactly", () => {
     const config = buildProviderConfig(
       [

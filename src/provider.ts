@@ -67,7 +67,7 @@ function formatConditional(
 function resolvePath(path: string, values: Record<string, unknown>): unknown {
   let value: unknown = values;
   for (const segment of path.split(".")) {
-    if (typeof value !== "object" || value === null || !(segment in value)) {
+    if (typeof value !== "object" || value === null || !Object.hasOwn(value, segment)) {
       return undefined;
     }
     value = (value as Record<string, unknown>)[segment];
