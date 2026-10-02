@@ -1,4 +1,5 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import { Model, Provider } from "@opencode/plugin";
+import type { Context } from "@opencode/plugin/promise/plugin";
 
 import {
   discoveryCacheKey,
@@ -20,12 +21,15 @@ import type {
   LiteLLMModelInfoEntry,
   Logger,
   OpenCodeConfig,
+  OpenCodeModelEntry,
   OpenCodeProvider,
 } from "./types.js";
 
 type RequestBodyTransform = (
   body: Record<string, unknown>,
 ) => Record<string, unknown>;
+
+const MAX_COMPLETION_TOKENS = Symbol("maxCompletionTokens");
 
 // LiteLLM `model_info.mode` values that can never serve /chat/completions.
 // `chat`, `completion` and `responses` are deliberately absent: LiteLLM
@@ -124,6 +128,13 @@ function addMaxCompletionTokensTransform(
       .map((entry) => entry.model_name),
   );
   if (modelIDs.size === 0) return;
+
+  for (const modelID of modelIDs) {
+    const model = provider.models?.[modelID];
+    if (model) {
+      Object.defineProperty(model, MAX_COMPLETION_TOKENS, { value: true });
+    }
+  }
 
   // `transformRequestBody` is the request hook of @ai-sdk/openai-compatible.
   // OpenCode forwards `provider.options` to the adapter factory verbatim, and
@@ -298,18 +309,125 @@ export async function applyDiscovery(
   }
 }
 
-export const ModelDiscoveryPlugin: Plugin = async ({ client }) => {
-  const log: Logger = async (level, message) => {
-    await client.app.log({
-      body: {
-        service: "opencode-model-discovery",
-        level,
-        message,
-      },
-    });
-  };
+export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
+  const log: Logger = (level, message) => console[level](`[opencode-model-discovery] ${message}`);
+  const discoveredModels = new Map<string, Map<string, Model.Info>>();
+  const discoveryStarted = new Set<string>();
 
-  return {
-    config: async (config) => applyDiscovery(config as OpenCodeConfig, log),
-  };
+  // This cleanup is independent of discovery. It can run before configured
+  // providers are materialized; the config provider transform will apply its
+  // own settings afterwards.
+  await ctx.provider.transform((editor) => {
+    for (const provider of editor.list()) {
+      editor.update(provider.provider.id, (info) => {
+        delete info.settings?.["opencode-model-discovery"];
+      });
+    }
+  });
+
+  // Model transforms run after provider sources have been materialized. A
+  // provider transform registered here runs before OpenCode's configuration
+  // source and therefore cannot add inventory for configured providers.
+  // ModelEditor.update can create a model for an available provider.
+  await ctx.model.transform((editor) => {
+    for (const record of editor.provider.list()) {
+      const providerID = record.provider.id;
+      if (discoveryStarted.has(providerID)) continue;
+
+      const provider = providerFromV2(record.provider);
+      const pluginOptions = provider.options?.["opencode-model-discovery"];
+      if (pluginOptions?.discovery !== true) continue;
+
+      discoveryStarted.add(providerID);
+      // Transforms are synchronous. Start discovery from the post-config
+      // source visible here, then reload to replay this transform once the
+      // discovered inventory is available. Do not register another transform.
+      void (async (): Promise<void> => {
+        await discoverProviderModels(providerID, provider, log);
+        if (provider.models) {
+          discoveredModels.set(
+            providerID,
+            new Map(modelsToV2(providerID, provider.models).map((model) => [model.id, model])),
+          );
+        }
+        await ctx.model.reload();
+      })().catch((error: unknown) => {
+        console.error("[opencode-model-discovery]", error);
+      });
+    }
+
+    for (const [providerID, models] of discoveredModels) {
+      const provider = editor.provider.get(providerID);
+      if (!provider) continue;
+      for (const [modelID, discoveredModel] of models) {
+        // ProviderRecord.models is the configured source inventory. Do not
+        // use ModelEditor.get() here: it resolves a candidate and therefore
+        // is not a reliable indication that the user configured an override.
+        if (provider.models.has(modelID)) continue;
+        editor.update(providerID, modelID, (model) => {
+          Object.assign(model, discoveredModel);
+        });
+      }
+    }
+  });
 };
+
+function providerFromV2(info: {
+  id: string;
+  name: string;
+  settings?: Record<string, unknown>;
+}): OpenCodeProvider {
+  return {
+    name: info.name,
+    options: info.settings as OpenCodeProvider["options"],
+  };
+}
+
+function modelsToV2(
+  providerID: string,
+  models: Record<string, OpenCodeModelEntry>,
+): Array<Model.Info> {
+  return Object.entries(models).map(([id, entry]) => {
+    const model: {
+      id: string;
+      modelID: string;
+      providerID: string;
+      name: string;
+      family?: string;
+      capabilities: { tools: boolean; input: string[]; output: string[] };
+      variants: Model.Info["variants"];
+      time: Model.Info["time"];
+      cost: Array<{ input: number; output: number; cache: { read: number; write: number } }>;
+      status: Model.Info["status"];
+      enabled: boolean;
+      limit: { context: number; input?: number; output: number };
+      compatibility?: { reasoningField?: string; maxTokensField?: "max_completion_tokens" };
+    } = Model.Info.default(
+      Provider.ID.make(providerID),
+      Model.ID.make(id),
+    ) as unknown as typeof model;
+    model.name = entry.name ?? id;
+    if (entry.family !== undefined) model.family = entry.family as Model.Info["family"];
+    if (entry.limit) model.limit = entry.limit;
+    if (entry.cost) {
+      model.cost = [{
+        input: entry.cost.input,
+        output: entry.cost.output,
+        cache: { read: entry.cost.cache_read ?? 0, write: entry.cost.cache_write ?? 0 },
+      }];
+    }
+    if (entry.tool_call !== undefined) model.capabilities.tools = entry.tool_call;
+    if (entry.modalities) model.capabilities = {
+      ...model.capabilities,
+      input: entry.modalities.input,
+      output: entry.modalities.output,
+    };
+    if (entry.reasoning === true) {
+      model.compatibility = { ...model.compatibility, reasoningField: "reasoning_content" };
+    }
+    if ((entry as Record<PropertyKey, unknown>)[MAX_COMPLETION_TOKENS] === true) {
+      model.compatibility = { ...model.compatibility, maxTokensField: "max_completion_tokens" };
+    }
+    return model as unknown as Model.Info;
+  });
+}

@@ -1,6 +1,6 @@
 {
   "name": "opencode-model-discovery",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "OpenCode plugin that discovers models from OpenAI-compatible LiteLlm providers",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@opencode-ai/plugin": "^1.18.25",
+    "@opencode/plugin": "^2.0.22",
     "@types/node": "^22.0.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.4.0",

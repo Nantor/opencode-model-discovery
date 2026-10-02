@@ -1,4 +1,7 @@
-import { readCache, writeCache } from "./cache.js";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type {
   Logger,
   ModelsDevData,
@@ -16,9 +19,13 @@ import type {
 // discovery data always wins; models.dev is only used to fill fields that
 // LiteLLM's /v2/model/info did not report.
 
-const MODELS_DEV_URL = "https://models.dev/api.json";
-const MODELS_DEV_CACHE_KEY = "models-dev-data";
-const DEFAULT_TIMEOUT_MS = 10_000;
+function modelsDevCachePath(): string {
+  return join(
+    process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"),
+    "opencode",
+    "models.json",
+  );
+}
 
 // Maps LiteLLM's `litellm_provider` metadata to the corresponding models.dev
 // provider id. Only providers with a confident, unambiguous mapping are
@@ -53,6 +60,25 @@ const LITELLM_PROVIDER_TO_MODELS_DEV: Record<string, string> = {
   nvidia_nim: "nvidia",
 };
 
+// Provider gateways sometimes expose a model under a shorter route ID than
+// its canonical models.dev ID. Keep these explicit so fallback metadata stays
+// deterministic even when an ID is shared by several catalog providers.
+const MODELS_DEV_FALLBACK_ALIASES: Record<string, string> = {
+  "devstral-2-123b": "mistral/devstral-2512",
+  "gemma-3-27b-it": "google/gemma-3-27b-it",
+  "gpt-image-1.5": "openai/gpt-image-1.5",
+  "gpt-oss-120b": "openai/gpt-oss-120b",
+  "gpt-oss-20b": "openai/gpt-oss-20b",
+  "nemotron-3-super-120b": "nvidia/nemotron-3-super-120b-a12b",
+  "nova-2-lite": "amazon/nova-2-lite",
+  "qwen3-235b": "alibaba/qwen3-235b-a22b",
+  "qwen3-coder-480b": "alibaba/qwen3-coder-480b-a35b-instruct",
+  "qwen3.6-27b": "alibaba/qwen3.6-27b",
+  "US-gemini-3.1-flash-image-preview": "google/gemini-3.1-flash-image-preview",
+  "US-gemini-3.6-flash": "google/gemini-3.6-flash",
+  "US-gpt-5.4": "openai/gpt-5.4",
+};
+
 async function safeLog(
   log: Logger | undefined,
   level: "info" | "warn" | "error",
@@ -76,67 +102,26 @@ function isModelsDevData(value: unknown): value is ModelsDevData {
   );
 }
 
-async function fetchModelsDevData(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ModelsDevData> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(MODELS_DEV_URL, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} ${res.statusText} from ${MODELS_DEV_URL}`);
-    }
-    return (await res.json()) as ModelsDevData;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-// De-duplicates concurrent in-process fetches when several providers opt
-// into enhancement within the same discovery run. Keyed by cache duration:
-// the on-disk cache file is shared, so a provider with a shorter
-// `discoveryCache` must not be handed a result another provider accepted
-// under a longer freshness window. Cleared once the fetch settles so later,
-// independent discovery runs re-check the disk cache.
-const inFlightFetches = new Map<number | undefined, Promise<ModelsDevData | undefined>>();
-
 /**
- * Fetch models.dev's model catalog, using an on-disk cache (when
- * `cacheDurationMs` is set).
+ * Read OpenCode's local models.dev catalog. OpenCode maintains this richer
+ * snapshot at ~/.cache/opencode/models.json, including canonical model IDs.
  */
 export async function getModelsDevData(
-  cacheDurationMs: number | undefined,
-  timeoutMs: number | undefined,
+  _cacheDurationMs: number | undefined,
+  _timeoutMs: number | undefined,
   log?: Logger,
 ): Promise<ModelsDevData | undefined> {
-  const inFlight = inFlightFetches.get(cacheDurationMs);
-  if (inFlight) return inFlight;
-
-  const promise = (async (): Promise<ModelsDevData | undefined> => {
-    try {
-      const cached = cacheDurationMs === undefined
-        ? undefined
-        : await readCache(MODELS_DEV_CACHE_KEY, cacheDurationMs, isModelsDevData);
-      if (cached) return cached;
-
-      const data = await fetchModelsDevData(timeoutMs);
-      if (cacheDurationMs !== undefined) {
-        await writeCache(MODELS_DEV_CACHE_KEY, data);
-      }
-      return data;
-    } catch (error) {
-      await safeLog(
-        log,
-        "warn",
-        `Could not fetch models.dev data: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return undefined;
-    }
-  })();
-
-  inFlightFetches.set(cacheDurationMs, promise);
+  const path = modelsDevCachePath();
   try {
-    return await promise;
-  } finally {
-    inFlightFetches.delete(cacheDurationMs);
+    const data = JSON.parse(await readFile(path, "utf8")) as unknown;
+    return isModelsDevData(data) ? data : undefined;
+  } catch (error) {
+    await safeLog(
+      log,
+      "warn",
+      `Could not read OpenCode models catalog at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
   }
 }
 
@@ -153,18 +138,50 @@ function stripLiteLLMPrefix(id: string, litellmProvider: string): string {
   return id.slice(separatorIndex + 1);
 }
 
+function fallbackModelsDevID(id: string): string {
+  // LiteLLM regional routes such as US-gpt-5.4 use the upstream model ID in
+  // models.dev without the region prefix.
+  return id.replace(/^US-/, "");
+}
+
+function findUnambiguousModelsDevEntry(
+  data: ModelsDevData,
+  resolvedID: string,
+): ModelsDevModel | undefined {
+  const modelID = fallbackModelsDevID(resolvedID);
+  const matches = Object.values(data)
+    .map((provider) => provider.models[modelID])
+    .filter((model): model is ModelsDevModel => model !== undefined);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function findFallbackModelsDevEntry(
+  data: ModelsDevData,
+  resolvedID: string,
+): ModelsDevModel | undefined {
+  const canonicalID = MODELS_DEV_FALLBACK_ALIASES[resolvedID];
+  if (canonicalID) {
+    const matches = Object.values(data)
+      .flatMap((provider) => Object.values(provider.models))
+      .filter((model) => model.id === canonicalID || model.canonical_model_id === canonicalID);
+    return matches.find((model) => model.id === canonicalID) ?? matches[0];
+  }
+  return findUnambiguousModelsDevEntry(data, resolvedID);
+}
+
 /**
  * Find the models.dev entry for a discovered model, using its
  * `litellm_provider` metadata to select the models.dev provider and the
  * LiteLLM-resolved model id (with any redundant provider prefix stripped) as
- * the lookup key. Returns undefined when no confident match is found.
+ * the lookup key. When LiteLLM omits provider metadata, uses an exact catalog
+ * ID match only when it occurs under exactly one models.dev provider.
  */
 export function findModelsDevEntry(
   data: ModelsDevData,
   litellmProvider: string | undefined,
   resolvedID: string,
 ): ModelsDevModel | undefined {
-  if (!litellmProvider) return undefined;
+  if (!litellmProvider) return findFallbackModelsDevEntry(data, resolvedID);
   const providerID = LITELLM_PROVIDER_TO_MODELS_DEV[litellmProvider.toLowerCase()];
   if (!providerID) return undefined;
 

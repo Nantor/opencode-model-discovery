@@ -9,12 +9,12 @@ Add the plugin and enable discovery on each provider that should be queried:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-model-discovery"],
-  "provider": {
+  "plugins": ["opencode-model-discovery"],
+  "providers": {
     "litellm": {
-      "npm": "@ai-sdk/openai-compatible",
+      "package": "@opencode/ai/providers/openai-compatible",
       "name": "LiteLLM",
-      "options": {
+      "settings": {
         "baseURL": "http://localhost:4000/v1",
         "apiKey": "{env:LITELLM_API_KEY}",
         "opencode-model-discovery": {
@@ -44,9 +44,9 @@ By default, discovery requests use the provider's `baseURL`. Set `discoveryBaseU
 
 ```json
 {
-  "provider": {
+  "providers": {
     "gateway": {
-      "options": {
+      "settings": {
         "baseURL": "https://inference.example.com/v1",
         "opencode-model-discovery": {
           "discovery": true,
@@ -68,13 +68,13 @@ Restart OpenCode after changing plugin or provider configuration.
 
 ## models.dev Enhancement
 
-LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, `release_date`, `temperature`, or complete `cost`/`limit`/`modalities` data. Set `enhanceFromModelsDev` to `true` to fill those gaps from the public [models.dev](https://models.dev) catalog:
+LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, `release_date`, `temperature`, or complete `cost`/`limit`/`modalities` data. Set `enhanceFromModelsDev` to `true` to fill those gaps from OpenCode's local models.dev catalog at `~/.cache/opencode/models.json`:
 
 ```json
 {
-  "provider": {
+  "providers": {
     "litellm": {
-      "options": {
+      "settings": {
         "baseURL": "http://localhost:4000/v1",
         "opencode-model-discovery": {
           "discovery": true,
@@ -86,9 +86,9 @@ LiteLLM's `/v2/model/info` does not always report every field OpenCode understan
 }
 ```
 
-Each discovered model is matched to a models.dev entry using LiteLLM's `litellm_provider` metadata (e.g. `openai`, `azure`, `vertex_ai-anthropic_models`) together with the resolved upstream model id. Only a fixed set of unambiguous provider mappings are used; models routed through a `litellm_provider` without a known mapping are left unmatched rather than guessed. LiteLLM-derived fields always take precedence — models.dev only fills in fields that discovery left `undefined` (for example, adding `family` and `release_date` to a model whose cost and limit were already reported by `/v2/model/info`).
+Each discovered model is matched to an OpenCode catalog entry using LiteLLM's `litellm_provider` metadata (e.g. `openai`, `azure`, `vertex_ai-anthropic_models`) together with the resolved upstream model id. For models without provider metadata, explicit aliases and canonical model IDs in the local catalog cover known gateway route names; otherwise, only an unambiguous exact ID match is used. LiteLLM-derived fields always take precedence — catalog data only fills in fields that discovery left `undefined` (for example, adding `family` and `release_date` to a model whose cost and limit were already reported by `/v2/model/info`).
 
-The models.dev catalog is fetched once per discovery run and shared across all providers with `enhanceFromModelsDev` enabled. It respects the same `discoveryCache` and `discoveryTimeout` settings as LiteLLM discovery. A failed or timed-out models.dev fetch is logged as a warning and does not prevent discovery from completing with LiteLLM-only data.
+The local catalog is maintained by OpenCode. If it is unavailable or malformed, the plugin logs a warning and discovery continues with LiteLLM-only data.
 
 ## Resolved Configuration
 
@@ -114,9 +114,9 @@ Set `modelNameFormat` to customize display names:
 
 ```json
 {
-  "provider": {
+  "providers": {
     "litellm": {
-      "options": {
+      "settings": {
         "baseURL": "http://localhost:4000/v1",
         "opencode-model-discovery": {
           "discovery": true,

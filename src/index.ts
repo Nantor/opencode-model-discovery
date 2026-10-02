@@ -1,4 +1,4 @@
-import type { PluginModule } from "@opencode-ai/plugin";
+import { Plugin } from "@opencode/plugin";
 
 import { ModelDiscoveryPlugin } from "./plugin.js";
 
@@ -8,7 +8,7 @@ export {
   discoverProviderModels,
 } from "./plugin.js";
 
-export default {
+export default Plugin.define({
   id: "opencode-model-discovery",
-  server: ModelDiscoveryPlugin,
-} satisfies PluginModule;
+  setup: ModelDiscoveryPlugin,
+});

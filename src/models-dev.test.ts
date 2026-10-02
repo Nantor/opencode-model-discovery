@@ -1,7 +1,7 @@
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   enhanceModelEntry,
@@ -28,6 +28,10 @@ const sampleData: ModelsDevData = {
         limit: { context: 128000, output: 16384 },
         cost: { input: 2.5, output: 10, cache_read: 1.25 },
         modalities: { input: ["text", "image"], output: ["text"] },
+      },
+      unique: {
+        id: "unique",
+        name: "Unique Model",
       },
     },
   },
@@ -59,10 +63,45 @@ const sampleData: ModelsDevData = {
       },
     },
   },
+  mistral: {
+    id: "mistral",
+    models: {
+      "devstral-2512": {
+        id: "devstral-2512",
+        canonical_model_id: "mistral/devstral-2512",
+        name: "Devstral 2",
+      },
+    },
+  },
+  google: {
+    id: "google",
+    models: {
+      "gemini-3.6-flash": {
+        id: "gemini-3.6-flash",
+        canonical_model_id: "google/gemini-3.6-flash",
+        name: "Gemini 3.6 Flash",
+      },
+    },
+  },
 };
 
 describe("findModelsDevEntry", () => {
-  it("returns undefined when litellm_provider is missing", () => {
+  it("finds an unambiguous exact id match when litellm_provider is missing", () => {
+    expect(findModelsDevEntry(sampleData, undefined, "unique")?.name).toBe("Unique Model");
+  });
+
+  it("strips a US regional route prefix for an unambiguous fallback match", () => {
+    expect(findModelsDevEntry(sampleData, undefined, "US-unique")?.name).toBe("Unique Model");
+  });
+
+  it("uses a verified explicit alias when litellm_provider is missing", () => {
+    expect(findModelsDevEntry(sampleData, undefined, "devstral-2-123b")?.name).toBe("Devstral 2");
+    expect(findModelsDevEntry(sampleData, undefined, "US-gemini-3.6-flash")?.name).toBe(
+      "Gemini 3.6 Flash",
+    );
+  });
+
+  it("returns undefined for ambiguous matches when litellm_provider is missing", () => {
     expect(findModelsDevEntry(sampleData, undefined, "gpt-4o")).toBeUndefined();
   });
 
@@ -165,109 +204,28 @@ describe("enhanceModelEntry", () => {
 describe("getModelsDevData", () => {
   let cacheHome: string | undefined;
 
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-    cacheHome = process.env.XDG_CACHE_HOME;
-  });
-
   afterEach(() => {
-    vi.unstubAllGlobals();
-    if (cacheHome === undefined) {
-      delete process.env.XDG_CACHE_HOME;
-    } else {
-      process.env.XDG_CACHE_HOME = cacheHome;
-    }
+    if (cacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = cacheHome;
   });
 
-  it("fetches and returns the models.dev catalog", async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      json: async () => sampleData,
-    } as Response);
+  it("reads OpenCode's local models catalog", async () => {
+    const directory = join(tmpdir(), `opencode-models-${process.pid}-${Date.now()}`);
+    cacheHome = process.env.XDG_CACHE_HOME;
+    process.env.XDG_CACHE_HOME = directory;
+    await mkdir(join(directory, "opencode"), { recursive: true });
+    await writeFile(join(directory, "opencode", "models.json"), JSON.stringify(sampleData));
 
-    const data = await getModelsDevData(undefined, undefined);
-    expect(data).toEqual(sampleData);
-    expect(fetch).toHaveBeenCalledWith(
-      "https://models.dev/api.json",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    await expect(getModelsDevData(undefined, undefined)).resolves.toEqual(sampleData);
+    await rm(directory, { recursive: true, force: true });
   });
 
-  it("returns undefined and logs a warning on fetch failure", async () => {
-    vi.mocked(fetch).mockRejectedValue(new Error("network down"));
+  it("logs a warning when OpenCode's local catalog is unavailable", async () => {
+    cacheHome = process.env.XDG_CACHE_HOME;
+    process.env.XDG_CACHE_HOME = join(tmpdir(), `missing-opencode-models-${Date.now()}`);
     const log = vi.fn();
 
-    const data = await getModelsDevData(undefined, undefined, log);
-    expect(data).toBeUndefined();
-    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("network down"));
-  });
-
-  it("returns undefined and logs a warning on non-OK HTTP status", async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: false,
-      status: 500,
-      statusText: "Internal Server Error",
-    } as Response);
-    const log = vi.fn();
-
-    const data = await getModelsDevData(undefined, undefined, log);
-    expect(data).toBeUndefined();
-    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("HTTP 500"));
-  });
-
-  it("caches the response on disk and reuses it within the cache duration", async () => {
-    const cacheDirectory = join(tmpdir(), `opencode-model-discovery-mdev-${process.pid}-${Date.now()}`);
-    process.env.XDG_CACHE_HOME = cacheDirectory;
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      json: async () => sampleData,
-    } as Response);
-
-    const first = await getModelsDevData(60_000, undefined);
-    const second = await getModelsDevData(60_000, undefined);
-
-    expect(first).toEqual(sampleData);
-    expect(second).toEqual(sampleData);
-    expect(fetch).toHaveBeenCalledTimes(1);
-
-    await rm(cacheDirectory, { recursive: true, force: true });
-  });
-
-  it("de-duplicates concurrent in-flight fetches", async () => {
-    let resolveFetch: (value: Response) => void = () => undefined;
-    const fetchPromise = new Promise<Response>((resolve) => {
-      resolveFetch = resolve;
-    });
-    vi.mocked(fetch).mockReturnValue(fetchPromise);
-
-    const call1 = getModelsDevData(undefined, undefined);
-    const call2 = getModelsDevData(undefined, undefined);
-
-    resolveFetch({ ok: true, json: async () => sampleData } as Response);
-
-    const [result1, result2] = await Promise.all([call1, call2]);
-    expect(result1).toEqual(sampleData);
-    expect(result2).toEqual(sampleData);
-    expect(fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not share in-flight results across different cache durations", async () => {
-    const cacheDirectory = join(tmpdir(), `opencode-model-discovery-mdev-${process.pid}-${Date.now()}`);
-    process.env.XDG_CACHE_HOME = cacheDirectory;
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      json: async () => sampleData,
-    } as Response);
-
-    const [first, second] = await Promise.all([
-      getModelsDevData(60_000, undefined),
-      getModelsDevData(1, undefined),
-    ]);
-
-    expect(first).toEqual(sampleData);
-    expect(second).toEqual(sampleData);
-    expect(fetch).toHaveBeenCalledTimes(2);
-
-    await rm(cacheDirectory, { recursive: true, force: true });
+    await expect(getModelsDevData(undefined, undefined, log)).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("Could not read OpenCode models catalog"));
   });
 });

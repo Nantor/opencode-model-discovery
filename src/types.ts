@@ -250,6 +250,7 @@ export interface ModelsDevModalities {
 
 export interface ModelsDevModel {
   id: string;
+  canonical_model_id?: string;
   name?: string;
   family?: string;
   attachment?: boolean;
