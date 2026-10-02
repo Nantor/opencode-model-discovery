@@ -24,6 +24,8 @@
     "lint:fix": "eslint src --fix",
     "test": "vitest src",
     "test:run": "vitest run src",
+    "debug:provider": "node scripts/debug-provider.ts",
+    "deploy:local": "cp dist/*.js ~/.config/opencode/plugins/ && opencode service restart",
     "prepublishOnly": "npm run lint && npm run test:run && npm run build"
   },
   "devDependencies": {

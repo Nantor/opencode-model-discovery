@@ -106,6 +106,14 @@ opencode debug config > resolved-opencode.json
 
 The output includes discovered models, manual overrides, and all inherited OpenCode settings. It can include API keys and other secrets, so do not commit or share it.
 
+To inspect the unprocessed LiteLLM responses alongside that resolved configuration for one provider, run:
+
+```bash
+npm run debug:provider -- litellm
+```
+
+The command loads both `~/.config/opencode/opencode.json` and `opencode.jsonc` when present, with entries in `opencode.jsonc` taking precedence for duplicate provider IDs. It uses the provider's `discoveryBaseURL` when configured (otherwise `baseURL`), sends its configured API key, and writes the raw `/v1/models`, raw `/v2/model/info`, and a reduced `opencode debug config` containing only `$schema` and the selected provider to `debug/<provider-id>.*.json`. It also writes `debug/<provider-id>.models.csv`, which lists every model ID and whether it was found in `/v1/models`, `/v2/model/info`, or the resolved provider configuration. Its `config_name_only` column is true when the resolved configuration entry contains only a `name`. These files can include API keys, model metadata, and other secrets; do not commit or share them.
+
 ## Model Names
 
 Without `modelNameFormat`, model IDs are normalized into display names. For example, `openai/gpt-4o-mini` becomes `Gpt 4o Mini`.
