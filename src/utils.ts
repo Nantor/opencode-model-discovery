@@ -1,6 +1,31 @@
+import type { Logger } from "./types.js";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Format an unknown thrown value into a human-readable message string.
+ */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Invoke a logger without letting it throw. Logging must never break discovery
+ * or provider initialization.
+ */
+export async function safeLog(
+  log: Logger | undefined,
+  level: "info" | "warn" | "error",
+  message: string,
+): Promise<void> {
+  try {
+    await log?.(level, message);
+  } catch {
+    // Swallow logging failures on purpose.
+  }
+}
 
 /**
  * Build a display name from a raw model id, e.g. "gpt-4o-mini" → "Gpt 4o Mini"

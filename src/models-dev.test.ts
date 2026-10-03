@@ -216,7 +216,7 @@ describe("getModelsDevData", () => {
     await mkdir(join(directory, "opencode"), { recursive: true });
     await writeFile(join(directory, "opencode", "models.json"), JSON.stringify(sampleData));
 
-    await expect(getModelsDevData(undefined, undefined)).resolves.toEqual(sampleData);
+    await expect(getModelsDevData()).resolves.toEqual(sampleData);
     await rm(directory, { recursive: true, force: true });
   });
 
@@ -225,7 +225,7 @@ describe("getModelsDevData", () => {
     process.env.XDG_CACHE_HOME = join(tmpdir(), `missing-opencode-models-${Date.now()}`);
     const log = vi.fn();
 
-    await expect(getModelsDevData(undefined, undefined, log)).resolves.toBeUndefined();
+    await expect(getModelsDevData(log)).resolves.toBeUndefined();
     expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("Could not read OpenCode models catalog"));
   });
 });

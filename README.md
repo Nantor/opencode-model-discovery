@@ -116,61 +116,9 @@ The command loads both `~/.config/opencode/opencode.json` and `opencode.jsonc` w
 
 ## Model Names
 
-Without `modelNameFormat`, model IDs are normalized into display names. For example, `openai/gpt-4o-mini` becomes `Gpt 4o Mini`.
+Model IDs are normalized into display names. For example, `openai/gpt-4o-mini` becomes `Gpt 4o Mini`.
 
-Set `modelNameFormat` to customize display names:
-
-```json
-{
-  "providers": {
-    "litellm": {
-      "settings": {
-        "baseURL": "http://localhost:4000/v1",
-        "opencode-model-discovery": {
-          "discovery": true,
-          "modelNameFormat": "{name} ({provider}/{id})"
-        }
-      }
-    }
-  }
-}
-```
-
-Supported placeholders:
-
-- `{name}`: normalized model name
-- `{id}`: effective model ID returned by the provider
-- `{provider}`: OpenCode provider ID
-- Any `OpenCodeModelEntry` field, using dot notation for nested values. Examples include `{family}`, `{reasoning}`, `{limit.context}`, `{cost.input}`, `{modalities.input}`, and `{options.reasoningSummary}`.
-
-Arrays and objects are inserted as JSON. Placeholders for fields that are not available on a model resolve to an empty string.
-Numeric `{limit.*}` placeholders use compact three-significant-digit notation such as `128K` or `1.05M`. Numeric `{cost.*}` placeholders are rounded to two decimal places.
-
-### Conditional Expressions
-
-Use a conditional expression to include text only when model metadata is available:
-
-```
-{?path:'text using $0'}
-```
-
-The condition is one or more field paths, and the quoted body can reference their values by zero-based position (`$0`, `$1`, and so on). A conditional resolves to an empty string when its condition is not met.
-
-```json
-{
-  "modelNameFormat": "{name}{?family:' ($0)'}{?limit.context:' - $0 context'}{?reasoning:' [reasoning]'}"
-}
-```
-
-The example might produce `Gpt 4o (gpt-4o) - 128K context [reasoning]`. Missing fields, `false`, `0`, and empty strings suppress their conditional text.
-
-- Use `&` when every path must be present and truthy: `{?name&family:'$0 ($1)'}`.
-- Use `|` when any path may be present and truthy: `{?family|name:'$0$1'}`.
-- `$0`, `$1`, and later references retain the position of each listed path. An unavailable value inserts an empty string.
-- Escape a literal single quote in the body as `\'`: `{?name:'it\'s $0'}`.
-- Do not mix `&` and `|` in one conditional expression.
-
-`discovery`, `discoveryBaseURL`, `discoveryTimeout`, `discoveryCache`, `modelNameFormat`, and `enhanceFromModelsDev` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
+`discovery`, `discoveryBaseURL`, `discoveryTimeout`, `discoveryCache`, and `enhanceFromModelsDev` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
 

@@ -169,37 +169,6 @@ describe("applyDiscovery", () => {
     await expect(applyDiscovery(config)).resolves.toBeUndefined();
   });
 
-  it("formats names with name, id, and provider placeholders", async () => {
-    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
-      ok: true,
-      json: async () =>
-        input.toString().includes("/models")
-          ? { data: [{ id: "openai/gpt-4o-mini" }] }
-          : { data: [] },
-    }) as Response);
-
-    const config: OpenCodeConfig = {
-      provider: {
-        gateway: {
-          options: {
-            baseURL: "https://llm.example.com/v1",
-            "opencode-model-discovery": {
-              discovery: true,
-              modelNameFormat: "{name} | {provider}/{id}",
-            },
-          },
-        },
-      },
-    };
-
-    await applyDiscovery(config);
-
-    expect(providerFor(config, "gateway").models?.["openai/gpt-4o-mini"]?.name).toBe(
-      "Gpt 4o Mini | gateway/openai/gpt-4o-mini",
-    );
-    expect(providerFor(config, "gateway").options).not.toHaveProperty("opencode-model-discovery");
-  });
-
   it("keeps manually configured models over discovered values", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,

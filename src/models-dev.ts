@@ -9,6 +9,7 @@ import type {
   ModelsDevProvider,
   OpenCodeModelEntry,
 } from "./types.js";
+import { errorMessage, safeLog } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // models.dev enhancement
@@ -79,18 +80,6 @@ const MODELS_DEV_FALLBACK_ALIASES: Record<string, string> = {
   "US-gpt-5.4": "openai/gpt-5.4",
 };
 
-async function safeLog(
-  log: Logger | undefined,
-  level: "info" | "warn" | "error",
-  message: string,
-): Promise<void> {
-  try {
-    await log?.(level, message);
-  } catch {
-    // Logging must never prevent discovery.
-  }
-}
-
 function isModelsDevData(value: unknown): value is ModelsDevData {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   return Object.values(value).every(
@@ -107,8 +96,6 @@ function isModelsDevData(value: unknown): value is ModelsDevData {
  * snapshot at ~/.cache/opencode/models.json, including canonical model IDs.
  */
 export async function getModelsDevData(
-  _cacheDurationMs: number | undefined,
-  _timeoutMs: number | undefined,
   log?: Logger,
 ): Promise<ModelsDevData | undefined> {
   const path = modelsDevCachePath();
@@ -119,7 +106,7 @@ export async function getModelsDevData(
     await safeLog(
       log,
       "warn",
-      `Could not read OpenCode models catalog at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not read OpenCode models catalog at ${path}: ${errorMessage(error)}`,
     );
     return undefined;
   }

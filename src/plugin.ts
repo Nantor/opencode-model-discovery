@@ -16,8 +16,8 @@ import {
 } from "./fetch.js";
 import { enhanceModelEntry, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
 import { buildProviderConfig } from "./provider.js";
+import { errorMessage, safeLog } from "./utils.js";
 import type {
-  LiteLLMModel,
   LiteLLMModelInfoEntry,
   Logger,
   OpenCodeConfig,
@@ -49,16 +49,18 @@ const ENDPOINT_ONLY_MODEL_MODES = new Set([
   "batch",
 ]);
 
-async function safeLog(
-  log: Logger | undefined,
-  level: "info" | "warn" | "error",
-  message: string,
-): Promise<void> {
-  try {
-    await log?.(level, message);
-  } catch {
-    // Logging must never prevent provider initialization.
-  }
+async function readOrFetchCache<T>(
+  key: string,
+  cacheDurationMs: number | undefined,
+  fetch: () => Promise<T[]>,
+  isItem: (value: unknown) => value is T,
+): Promise<T[]> {
+  if (cacheDurationMs === undefined) return fetch();
+  const cached = await readCache(key, cacheDurationMs, isArrayOf(isItem));
+  if (cached !== undefined) return cached;
+  const fresh = await fetch();
+  await writeCache(key, fresh);
+  return fresh;
 }
 
 function entriesForModels(
@@ -212,28 +214,25 @@ export async function discoverProviderModels(
     }
     const modelsCacheKey = discoveryCacheKey("models", discoveryBaseURL, options.apiKey);
     const infoCacheKey = discoveryCacheKey("model-info", discoveryBaseURL, options.apiKey);
-    const cachedModels = cacheDurationMs === undefined
-      ? undefined
-      : await readCache(modelsCacheKey, cacheDurationMs, isArrayOf(isLiteLLMModel));
-    const models: LiteLLMModel[] =
-      cachedModels ?? await fetchModels(discoveryBaseURL, options.apiKey, timeoutMs);
-    if (cacheDurationMs !== undefined && cachedModels === undefined) {
-      await writeCache(modelsCacheKey, models);
-    }
+    const models = await readOrFetchCache(
+      modelsCacheKey,
+      cacheDurationMs,
+      () => fetchModels(discoveryBaseURL, options.apiKey, timeoutMs),
+      isLiteLLMModel,
+    );
     let infoEntries: LiteLLMModelInfoEntry[] = [];
     try {
-      const cachedInfo = cacheDurationMs === undefined
-        ? undefined
-        : await readCache(infoCacheKey, cacheDurationMs, isArrayOf(isLiteLLMModelInfoEntry));
-      infoEntries = cachedInfo ?? await fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs);
-      if (cacheDurationMs !== undefined && cachedInfo === undefined) {
-        await writeCache(infoCacheKey, infoEntries);
-      }
+      infoEntries = await readOrFetchCache(
+        infoCacheKey,
+        cacheDurationMs,
+        () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs),
+        isLiteLLMModelInfoEntry,
+      );
     } catch (error) {
       await safeLog(
         log,
         "warn",
-        `Could not fetch detailed model info for "${providerID}": ${error instanceof Error ? error.message : String(error)}`,
+        `Could not fetch detailed model info for "${providerID}": ${errorMessage(error)}`,
       );
     }
 
@@ -247,14 +246,10 @@ export async function discoverProviderModels(
       options.apiKey,
       provider.name ?? providerID,
       false,
-      typeof pluginOptions.modelNameFormat === "string"
-        ? pluginOptions.modelNameFormat
-        : undefined,
-      providerID,
     );
 
     if (pluginOptions.enhanceFromModelsDev === true) {
-      const modelsDevData = await getModelsDevData(cacheDurationMs, timeoutMs, log);
+      const modelsDevData = await getModelsDevData(log);
       if (modelsDevData) {
         for (const entry of discoveredEntries) {
           const modelEntry = discovered.models?.[entry.model_name];
@@ -281,7 +276,7 @@ export async function discoverProviderModels(
     await safeLog(
       log,
       "error",
-      `Model discovery failed for "${providerID}": ${error instanceof Error ? error.message : String(error)}`,
+      `Model discovery failed for "${providerID}": ${errorMessage(error)}`,
     );
   }
 }
@@ -303,7 +298,7 @@ export async function applyDiscovery(
       await safeLog(
         log,
         "error",
-        `Model discovery failed for "${providerIDs[index]}": ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+        `Model discovery failed for "${providerIDs[index]}": ${errorMessage(result.reason)}`,
       );
     }
   }

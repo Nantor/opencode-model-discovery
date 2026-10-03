@@ -202,7 +202,6 @@ export interface OpenCodeDiscoveryOptions {
   discoveryBaseURL?: string;
   discoveryTimeout?: number;
   discoveryCache?: string;
-  modelNameFormat?: string;
   enhanceFromModelsDev?: boolean;
 }
 
