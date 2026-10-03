@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+
+import type { Context } from "@opencode/plugin/promise/plugin";
+
+export type Storage = Context["storage"];
 
 type CacheEntry<T> = {
   createdAt: number;
@@ -25,40 +26,35 @@ export function parseCacheDuration(value: unknown): number | undefined {
   return Number.isFinite(durationMs) && durationMs > 0 ? durationMs : undefined;
 }
 
-function cacheDirectory(): string {
-  return process.env.XDG_CACHE_HOME
-    ? join(process.env.XDG_CACHE_HOME, "opencode-model-discovery")
-    : join(homedir(), ".cache", "opencode-model-discovery");
-}
-
-function cachePath(key: string): string {
-  return join(cacheDirectory(), `${createHash("sha256").update(key).digest("hex")}.json`);
-}
-
 export function isArrayOf<T>(isItem: (value: unknown) => value is T): (value: unknown) => value is T[] {
   return (value): value is T[] => Array.isArray(value) && value.every(isItem);
 }
 
 /**
- * Read a cached value. Entries that are expired, malformed, or whose `value`
- * fails `isValid` are treated as a cache miss so a corrupted cache file can
- * never break discovery until it expires.
+ * Read a cached value from OpenCode storage. Entries that are expired,
+ * malformed, or whose `value` fails `isValid` are treated as a cache miss.
  */
 export async function readCache<T>(
+  storage: Storage,
   key: string,
   durationMs: number,
   isValid: (value: unknown) => value is T,
 ): Promise<T | undefined> {
   try {
-    const entry = JSON.parse(await readFile(cachePath(key), "utf8")) as CacheEntry<unknown>;
+    const entry = (await storage.get(key)) as CacheEntry<unknown> | undefined;
     if (
       typeof entry !== "object" ||
       entry === null ||
       typeof entry.createdAt !== "number" ||
-      !Number.isFinite(entry.createdAt) ||
-      Date.now() - entry.createdAt > durationMs ||
-      !isValid(entry.value)
+      !Number.isFinite(entry.createdAt)
     ) {
+      return undefined;
+    }
+    if (Date.now() - entry.createdAt > durationMs) {
+      void storage.remove(key).catch(() => undefined);
+      return undefined;
+    }
+    if (!isValid(entry.value)) {
       return undefined;
     }
     return entry.value;
@@ -67,20 +63,16 @@ export async function readCache<T>(
   }
 }
 
-export async function writeCache<T>(key: string, value: T): Promise<void> {
-  const directory = cacheDirectory();
-  const path = cachePath(key);
-  const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+export async function writeCache<T>(
+  storage: Storage,
+  key: string,
+  value: T,
+): Promise<void> {
   const entry: CacheEntry<T> = { createdAt: Date.now(), value };
-
   try {
-    await mkdir(directory, { recursive: true });
-    await writeFile(temporaryPath, JSON.stringify(entry), "utf8");
-    await rename(temporaryPath, path);
+    await storage.set(key, entry as never);
   } catch {
-    // Cache failures must never prevent model discovery, but do not leave
-    // half-written temporary files behind.
-    await unlink(temporaryPath).catch(() => undefined);
+    // Cache failures must never prevent model discovery
   }
 }
 
@@ -92,5 +84,29 @@ export function discoveryCacheKey(
   const apiKeyHash = apiKey
     ? createHash("sha256").update(apiKey).digest("hex")
     : "none";
-  return `${endpoint}:${baseURL}:${apiKeyHash}`;
+  return `discovery:${endpoint}:${baseURL}:${apiKeyHash}`;
+}
+
+export function createMemoryStorage(): Storage {
+  const store = new Map<string, unknown>();
+  return {
+    async get(key: string) {
+      return store.get(key) as never;
+    },
+    async set(key: string, value: unknown) {
+      store.set(key, value);
+    },
+    async remove(key: string) {
+      store.delete(key);
+    },
+    async scan(options: { prefix: string; after?: string; limit?: number }) {
+      const entries: Array<{ key: string; value: never }> = [];
+      for (const [key, value] of store.entries()) {
+        if (key.startsWith(options.prefix)) {
+          entries.push({ key, value: value as never });
+        }
+      }
+      return { entries };
+    },
+  };
 }

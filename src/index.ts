@@ -7,6 +7,7 @@ export {
   applyDiscovery,
   discoverProviderModels,
 } from "./plugin.js";
+export { createMemoryStorage, type Storage } from "./cache.js";
 
 export default Plugin.define({
   id: "opencode-model-discovery",

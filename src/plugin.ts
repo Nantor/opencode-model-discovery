@@ -6,6 +6,7 @@ import {
   isArrayOf,
   parseCacheDuration,
   readCache,
+  type Storage,
   writeCache,
 } from "./cache.js";
 import {
@@ -50,16 +51,17 @@ const ENDPOINT_ONLY_MODEL_MODES = new Set([
 ]);
 
 async function readOrFetchCache<T>(
+  storage: Storage | undefined,
   key: string,
   cacheDurationMs: number | undefined,
   fetch: () => Promise<T[]>,
   isItem: (value: unknown) => value is T,
 ): Promise<T[]> {
-  if (cacheDurationMs === undefined) return fetch();
-  const cached = await readCache(key, cacheDurationMs, isArrayOf(isItem));
+  if (!storage || cacheDurationMs === undefined) return fetch();
+  const cached = await readCache(storage, key, cacheDurationMs, isArrayOf(isItem));
   if (cached !== undefined) return cached;
   const fresh = await fetch();
-  await writeCache(key, fresh);
+  await writeCache(storage, key, fresh);
   return fresh;
 }
 
@@ -175,6 +177,7 @@ export async function discoverProviderModels(
   providerID: string,
   provider: OpenCodeProvider | undefined,
   log?: Logger,
+  storage?: Storage,
 ): Promise<void> {
   if (!provider) return;
   const options = provider.options;
@@ -215,6 +218,7 @@ export async function discoverProviderModels(
     const modelsCacheKey = discoveryCacheKey("models", discoveryBaseURL, options.apiKey);
     const infoCacheKey = discoveryCacheKey("model-info", discoveryBaseURL, options.apiKey);
     const models = await readOrFetchCache(
+      storage,
       modelsCacheKey,
       cacheDurationMs,
       () => fetchModels(discoveryBaseURL, options.apiKey, timeoutMs),
@@ -223,6 +227,7 @@ export async function discoverProviderModels(
     let infoEntries: LiteLLMModelInfoEntry[] = [];
     try {
       infoEntries = await readOrFetchCache(
+        storage,
         infoCacheKey,
         cacheDurationMs,
         () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs),
@@ -284,12 +289,13 @@ export async function discoverProviderModels(
 export async function applyDiscovery(
   config: OpenCodeConfig,
   log?: Logger,
+  storage?: Storage,
 ): Promise<void> {
   // discoverProviderModels catches its own errors, but one provider must
   // never be able to abort discovery for the others or block startup.
   const results = await Promise.allSettled(
     Object.entries(config.provider ?? {}).map(([providerID, provider]) =>
-      discoverProviderModels(providerID, provider, log),
+      discoverProviderModels(providerID, provider, log, storage),
     ),
   );
   const providerIDs = Object.keys(config.provider ?? {});
@@ -338,7 +344,7 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
       // source visible here, then reload to replay this transform once the
       // discovered inventory is available. Do not register another transform.
       void (async (): Promise<void> => {
-        await discoverProviderModels(providerID, provider, log);
+        await discoverProviderModels(providerID, provider, log, ctx.storage);
         if (provider.models) {
           discoveredModels.set(
             providerID,

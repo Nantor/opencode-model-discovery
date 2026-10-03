@@ -16,9 +16,9 @@ npm run test:run     # vitest run
 
 Plugin entrypoint: `src/index.ts`. Hook implementation: `src/plugin.ts`. Build output: the single bundled file `dist/opencode-model-discovery.js`.
 
-Flow: OpenCode loads the plugin -> the `config` hook finds providers with `options["opencode-model-discovery"].discovery: true` -> fetches `GET /v1/models?return_wildcard_routes=true` and optional metadata from `GET /v2/model/info?return_wildcard_routes=true` -> filters out endpoint-only modes (embedding, image generation, ...) -> optionally enhances from models.dev -> merges discovered models into the live provider config. Explicit model entries win. Results may be cached on disk (`src/cache.ts`) when `discoveryCache` is set.
+Flow: OpenCode loads the plugin -> the `config` hook finds providers with `options["opencode-model-discovery"].discovery: true` -> fetches `GET /v1/models?return_wildcard_routes=true` and optional metadata from `GET /v2/model/info?return_wildcard_routes=true` -> filters out endpoint-only modes (embedding, image generation, ...) -> optionally enhances from models.dev -> merges discovered models into the live provider config. Explicit model entries win. Results may be cached in OpenCode storage (`src/cache.ts`) when `discoveryCache` is set.
 
-Module map: `src/fetch.ts` (HTTP + response type guards), `src/provider.ts` (LiteLLM -> OpenCode model mapping), `src/models-dev.ts` (models.dev enhancement), `src/cache.ts` (disk cache), `src/utils.ts` (display-name + sort helpers).
+Module map: `src/fetch.ts` (HTTP + response type guards), `src/provider.ts` (LiteLLM -> OpenCode model mapping), `src/models-dev.ts` (models.dev enhancement), `src/cache.ts` (OpenCode storage cache), `src/utils.ts` (display-name + sort helpers).
 
 Limits: `limit.context` comes from `max_input_tokens`; LiteLLM's `max_tokens` is an output alias, not the context window.
 

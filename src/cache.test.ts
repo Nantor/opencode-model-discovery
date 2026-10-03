@@ -1,10 +1,14 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import { isArrayOf, parseCacheDuration, readCache, writeCache } from "./cache.js";
+import {
+  createMemoryStorage,
+  discoveryCacheKey,
+  isArrayOf,
+  parseCacheDuration,
+  readCache,
+  type Storage,
+  writeCache,
+} from "./cache.js";
 
 describe("parseCacheDuration", () => {
   it("parses fixed-length ISO 8601 durations", () => {
@@ -23,68 +27,92 @@ describe("parseCacheDuration", () => {
   });
 });
 
-describe("readCache / writeCache", () => {
-  let cacheHome: string | undefined;
-  let directory: string;
+describe("discoveryCacheKey", () => {
+  it("creates prefixed cache keys with hashed api keys", () => {
+    const key1 = discoveryCacheKey("models", "https://api.example.com", "secret-key");
+    const key2 = discoveryCacheKey("models", "https://api.example.com", "secret-key");
+    const keyNoAuth = discoveryCacheKey("models", "https://api.example.com");
+
+    expect(key1).toBe(key2);
+    expect(key1).toContain("discovery:models:https://api.example.com:");
+    expect(key1).not.toContain("secret-key");
+    expect(keyNoAuth).toContain("discovery:models:https://api.example.com:none");
+  });
+});
+
+describe("readCache / writeCache with storage", () => {
   const isNumberArray = isArrayOf((value): value is number => typeof value === "number");
 
-  beforeEach(async () => {
-    cacheHome = process.env.XDG_CACHE_HOME;
-    directory = await mkdtemp(join(tmpdir(), "opencode-model-discovery-cache-"));
-    process.env.XDG_CACHE_HOME = directory;
-  });
-
-  afterEach(async () => {
-    if (cacheHome === undefined) {
-      delete process.env.XDG_CACHE_HOME;
-    } else {
-      process.env.XDG_CACHE_HOME = cacheHome;
-    }
-    await rm(directory, { recursive: true, force: true });
-  });
-
   it("round-trips a value", async () => {
-    await writeCache("key", [1, 2, 3]);
-    await expect(readCache("key", 60_000, isNumberArray)).resolves.toEqual([1, 2, 3]);
+    const storage = createMemoryStorage();
+    await writeCache(storage, "key", [1, 2, 3]);
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toEqual([1, 2, 3]);
   });
 
   it("treats a value that fails validation as a cache miss", async () => {
-    await writeCache("key", "not an array");
-    await expect(readCache("key", 60_000, isNumberArray)).resolves.toBeUndefined();
+    const storage = createMemoryStorage();
+    await writeCache(storage, "key", "not an array");
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toBeUndefined();
 
-    await writeCache("key", [1, "two"]);
-    await expect(readCache("key", 60_000, isNumberArray)).resolves.toBeUndefined();
+    await writeCache(storage, "key", [1, "two"]);
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toBeUndefined();
   });
 
-  it("treats a malformed cache file as a cache miss", async () => {
-    await writeCache("key", [1]);
-    const cacheDirectory = join(directory, "opencode-model-discovery");
-    const [file] = await readdir(cacheDirectory);
-    await writeFile(join(cacheDirectory, file), "{not json", "utf8");
-    await expect(readCache("key", 60_000, isNumberArray)).resolves.toBeUndefined();
+  it("treats a malformed storage entry as a cache miss", async () => {
+    const storage = createMemoryStorage();
+    await storage.set("key", "not an object" as never);
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toBeUndefined();
+
+    await storage.set("key", { createdAt: "not a number", value: [1] } as never);
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toBeUndefined();
   });
 
-  it("removes the temporary file when the write cannot be completed", async () => {
-    // Pre-create the final path as a directory so rename() fails.
-    await writeCache("probe", [1]);
-    const cacheDirectory = join(directory, "opencode-model-discovery");
-    const [probe] = await readdir(cacheDirectory);
-    await rm(join(cacheDirectory, probe));
-    await mkdir(join(cacheDirectory, probe));
+  it("treats an expired entry as a cache miss and removes it", async () => {
+    const storage = createMemoryStorage();
+    await storage.set("key", {
+      createdAt: Date.now() - 120_000,
+      value: [1],
+    } as never);
 
-    await writeCache("probe", [2]);
-
-    await expect(readdir(cacheDirectory)).resolves.toEqual([probe]);
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toBeUndefined();
+    await expect(storage.get("key")).resolves.toBeUndefined();
   });
 
-  it("treats an expired entry as a cache miss", async () => {
-    await writeCache("key", [1]);
-    const cacheDirectory = join(directory, "opencode-model-discovery");
-    const [file] = await readdir(cacheDirectory);
-    const path = join(cacheDirectory, file);
-    const entry = JSON.parse(await readFile(path, "utf8")) as { createdAt: number };
-    entry.createdAt = Date.now() - 120_000;
-    await writeFile(path, JSON.stringify(entry), "utf8");
-    await expect(readCache("key", 60_000, isNumberArray)).resolves.toBeUndefined();
+  it("handles storage write and read errors gracefully", async () => {
+    const brokenStorage: Storage = {
+      async get() {
+        throw new Error("storage get failed");
+      },
+      async set() {
+        throw new Error("storage set failed");
+      },
+      async remove() {
+        throw new Error("storage remove failed");
+      },
+      async scan() {
+        return { entries: [] };
+      },
+    };
+
+    await expect(writeCache(brokenStorage, "key", [1])).resolves.toBeUndefined();
+    await expect(readCache(brokenStorage, "key", 60_000, isNumberArray)).resolves.toBeUndefined();
+  });
+});
+
+describe("createMemoryStorage", () => {
+  it("supports get, set, remove, and scan operations", async () => {
+    const storage = createMemoryStorage();
+    await storage.set("cache:1", "one" as never);
+    await storage.set("cache:2", "two" as never);
+    await storage.set("other:1", "other" as never);
+
+    expect(await storage.get("cache:1")).toBe("one");
+    expect(await storage.get("unknown")).toBeUndefined();
+
+    const scanResult = await storage.scan({ prefix: "cache:" });
+    expect(scanResult.entries).toHaveLength(2);
+
+    await storage.remove("cache:1");
+    expect(await storage.get("cache:1")).toBeUndefined();
   });
 });

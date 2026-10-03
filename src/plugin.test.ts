@@ -1,9 +1,8 @@
-import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import type { Context } from "@opencode/plugin/promise/plugin";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { applyDiscovery } from "./plugin.js";
+import { createMemoryStorage } from "./cache.js";
+import { applyDiscovery, ModelDiscoveryPlugin } from "./plugin.js";
 import type { OpenCodeConfig, OpenCodeProvider } from "./types.js";
 
 function providerFor(config: OpenCodeConfig, id: string): OpenCodeProvider {
@@ -13,20 +12,12 @@ function providerFor(config: OpenCodeConfig, id: string): OpenCodeProvider {
 }
 
 describe("applyDiscovery", () => {
-  let cacheHome: string | undefined;
-
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
-    cacheHome = process.env.XDG_CACHE_HOME;
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
-    if (cacheHome === undefined) {
-      delete process.env.XDG_CACHE_HOME;
-    } else {
-      process.env.XDG_CACHE_HOME = cacheHome;
-    }
   });
 
   it("only discovers models for opted-in providers", async () => {
@@ -453,8 +444,7 @@ describe("applyDiscovery", () => {
   });
 
   it("reuses discovery responses until the configured cache duration expires", async () => {
-    const cacheDirectory = join(tmpdir(), `opencode-model-discovery-${process.pid}-${Date.now()}`);
-    process.env.XDG_CACHE_HOME = cacheDirectory;
+    const storage = createMemoryStorage();
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
@@ -474,15 +464,13 @@ describe("applyDiscovery", () => {
       },
     });
 
-    await applyDiscovery(config());
-    await applyDiscovery(config());
+    await applyDiscovery(config(), undefined, storage);
+    await applyDiscovery(config(), undefined, storage);
     expect(fetch).toHaveBeenCalledTimes(2);
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    await applyDiscovery(config());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await applyDiscovery(config(), undefined, storage);
     expect(fetch).toHaveBeenCalledTimes(4);
-
-    await rm(cacheDirectory, { recursive: true, force: true });
   });
 
   it("ignores logger failures", async () => {
@@ -690,5 +678,92 @@ describe("applyDiscovery", () => {
     const models = providerFor(config, "gateway").models ?? {};
     expect(models["claude-opus-4-5*"]).toBeDefined();
     expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeUndefined();
+  });
+});
+
+describe("ModelDiscoveryPlugin", () => {
+  it("uses ctx.storage for caching during discovery", async () => {
+    const storage = createMemoryStorage();
+    const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [{ id: "model-a" }] }
+          : { data: [{ model_name: "model-a", litellm_params: {}, model_info: {} }] },
+    }) as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    let providerTransformCb: Parameters<Context["provider"]["transform"]>[0] | undefined;
+    let modelTransformCb: Parameters<Context["model"]["transform"]>[0] | undefined;
+    const reloadMock = vi.fn().mockResolvedValue(undefined);
+
+    const providerRecord = {
+      provider: {
+        id: "my-provider",
+        name: "My Provider",
+        settings: {
+          baseURL: "https://llm.example.com/v1",
+          "opencode-model-discovery": {
+            discovery: true,
+            discoveryCache: "PT1H",
+          },
+        },
+      },
+      models: new Map(),
+    };
+
+    const ctx = {
+      provider: {
+        transform: vi.fn().mockImplementation(async (cb) => {
+          providerTransformCb = cb;
+        }),
+      },
+      model: {
+        transform: vi.fn().mockImplementation(async (cb) => {
+          modelTransformCb = cb;
+        }),
+        reload: reloadMock,
+      },
+      storage,
+    } as unknown as Context;
+
+    await ModelDiscoveryPlugin(ctx);
+
+    expect(ctx.provider.transform).toHaveBeenCalled();
+    expect(ctx.model.transform).toHaveBeenCalled();
+
+    const providerEditor = {
+      list: () => [providerRecord],
+      update: vi.fn(),
+    };
+    providerTransformCb?.(providerEditor as never);
+
+    const updatedModels = new Map<string, unknown>();
+    const modelEditor = {
+      provider: {
+        list: () => [providerRecord],
+        get: () => providerRecord,
+      },
+      update: vi.fn((_pId: string, mId: string, updateFn: (draft: Record<string, unknown>) => void) => {
+        const draft = { id: mId };
+        updateFn(draft);
+        updatedModels.set(mId, draft);
+      }),
+    };
+
+    modelTransformCb?.(modelEditor as never);
+
+    // Wait for background discovery promise to complete and reload to be called
+    await vi.waitFor(() => {
+      expect(reloadMock).toHaveBeenCalled();
+    });
+
+    // Replay model transform after reload
+    modelTransformCb?.(modelEditor);
+    expect(updatedModels.has("model-a")).toBe(true);
+
+    // Check that ctx.storage was populated with cache entries
+    const cachedEntries = await storage.scan({ prefix: "discovery:" });
+    expect(cachedEntries.entries.length).toBeGreaterThan(0);
   });
 });
