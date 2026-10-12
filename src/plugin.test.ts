@@ -1,5 +1,11 @@
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { Context } from "@opencode/plugin/promise/plugin";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { ModelsDevData } from "./types.js";
 
 import { createMemoryStorage } from "./cache.js";
 import { applyDiscovery, ModelDiscoveryPlugin } from "./plugin.js";
@@ -527,30 +533,32 @@ describe("applyDiscovery", () => {
   });
 
   it("enhances discovered models with models.dev data when enabled", async () => {
+    // The plugin reads OpenCode's local models.dev catalog snapshot rather
+    // than fetching models.dev at runtime.
+    const cacheDirectory = join(tmpdir(), `opencode-models-${process.pid}-${Date.now()}`);
+    process.env.XDG_CACHE_HOME = cacheDirectory;
+    const catalog: ModelsDevData = {
+      openai: {
+        id: "openai",
+        npm: "@ai-sdk/openai",
+        name: "OpenAI",
+        models: {
+          "gpt-4o": {
+            id: "gpt-4o",
+            name: "GPT-4o",
+            family: "gpt",
+            release_date: "2024-05-13",
+            temperature: true,
+            modalities: { input: ["text", "image"], output: ["text"] },
+          },
+        },
+      },
+    };
+    await mkdir(join(cacheDirectory, "opencode"), { recursive: true });
+    await writeFile(join(cacheDirectory, "opencode", "models.json"), JSON.stringify(catalog));
+
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("models.dev")) {
-        return {
-          ok: true,
-          json: async () => ({
-            openai: {
-              id: "openai",
-              npm: "@ai-sdk/openai",
-              name: "OpenAI",
-              models: {
-                "gpt-4o": {
-                  id: "gpt-4o",
-                  name: "GPT-4o",
-                  family: "gpt",
-                  release_date: "2024-05-13",
-                  temperature: true,
-                  modalities: { input: ["text", "image"], output: ["text"] },
-                },
-              },
-            },
-          }),
-        } as Response;
-      }
       return {
         ok: true,
         json: async () =>
@@ -591,6 +599,9 @@ describe("applyDiscovery", () => {
     expect(model?.temperature).toBe(true);
     // LiteLLM-derived limit must remain untouched by the enhancement pass.
     expect(model?.limit).toEqual({ context: 128000, output: 16384 });
+
+    delete process.env.XDG_CACHE_HOME;
+    await rm(cacheDirectory, { recursive: true, force: true });
   });
 
   it("does not fetch models.dev when enhanceFromModelsDev is not set", async () => {
@@ -618,11 +629,15 @@ describe("applyDiscovery", () => {
   });
 
   it("continues discovery when models.dev enhancement fails", async () => {
+    // A corrupt/invalid local catalog makes the enhancement pass fail, but
+    // discovery itself must still complete normally.
+    const cacheDirectory = join(tmpdir(), `opencode-models-${process.pid}-${Date.now()}`);
+    process.env.XDG_CACHE_HOME = cacheDirectory;
+    await mkdir(join(cacheDirectory, "opencode"), { recursive: true });
+    await writeFile(join(cacheDirectory, "opencode", "models.json"), "{ not valid json");
+
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = input.toString();
-      if (url.includes("models.dev")) {
-        return { ok: false, status: 500, statusText: "Internal Server Error" } as Response;
-      }
       return {
         ok: true,
         json: async () =>
@@ -646,6 +661,9 @@ describe("applyDiscovery", () => {
     await applyDiscovery(config);
 
     expect(providerFor(config, "gateway").models?.["gpt-4o"]?.name).toBe("Gpt 4o");
+
+    delete process.env.XDG_CACHE_HOME;
+    await rm(cacheDirectory, { recursive: true, force: true });
   });
 
   it("preserves a wildcard id from /v1/models", async () => {
