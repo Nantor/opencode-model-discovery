@@ -86,6 +86,48 @@ const sampleData: ModelsDevData = {
 };
 
 describe("findModelsDevEntry", () => {
+  it("ignores configured prefixes and postfixes for provider-specific and fallback lookup", () => {
+    const options = { modelsDevIgnorePrefixes: ["EU-"], modelsDevIgnorePostfixes: ["-private"] };
+    expect(findModelsDevEntry(sampleData, "openai", "EU-gpt-4o-private", options))
+      .toBe(sampleData.openai.models["gpt-4o"]);
+    expect(findModelsDevEntry(sampleData, "openai", "openai/EU-gpt-4o-private", options))
+      .toBe(sampleData.openai.models["gpt-4o"]);
+    expect(findModelsDevEntry(sampleData, undefined, "EU-unique-private", options))
+      .toBe(sampleData.openai.models.unique);
+    expect(findModelsDevEntry(sampleData, undefined, "EU-gpt-4o-private", options)).toBeUndefined();
+    expect(findModelsDevEntry(sampleData, "unknown", "EU-gpt-4o-private", options)).toBeUndefined();
+  });
+
+  it("prefers existing matches over affix-stripped matches", () => {
+    const exact = { id: "EU-unique", name: "Exact route" };
+    const data = { custom: { models: { "EU-unique": exact, unique: { id: "unique" } } } };
+    expect(findModelsDevEntry(data, undefined, "EU-unique", { modelsDevIgnorePrefixes: ["EU-"] }))
+      .toBe(exact);
+  });
+
+  it("uses the longest literal affix once and leaves interior and case-mismatched text alone", () => {
+    const options = {
+      modelsDevIgnorePrefixes: ["E", "EU-"],
+      modelsDevIgnorePostfixes: ["e", "-private"],
+    };
+    expect(findModelsDevEntry(sampleData, undefined, "EU-unique-private", options))
+      .toBe(sampleData.openai.models.unique);
+    for (const id of ["eu-unique-private", "EU-EU-unique-private", "unique-private-interior"]) {
+      expect(findModelsDevEntry(sampleData, undefined, id, options)).toBeUndefined();
+    }
+  });
+
+  it("ignores invalid affix values and avoids empty lookup IDs", () => {
+    const options = {
+      modelsDevIgnorePrefixes: [null, "", 12, "EU-"] as unknown as string[],
+      modelsDevIgnorePostfixes: "-private" as unknown as string[],
+    };
+    expect(findModelsDevEntry(sampleData, undefined, "EU-unique", options))
+      .toBe(sampleData.openai.models.unique);
+    expect(findModelsDevEntry(sampleData, undefined, "EU-", options)).toBeUndefined();
+    expect(findModelsDevEntry(sampleData, undefined, "EU-unique-private", options)).toBeUndefined();
+  });
+
   it("finds an unambiguous exact id match when litellm_provider is missing", () => {
     expect(findModelsDevEntry(sampleData, undefined, "unique")?.name).toBe("Unique Model");
   });

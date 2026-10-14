@@ -263,6 +263,7 @@ export async function discoverProviderModels(
             modelsDevData,
             entry.model_info.litellm_provider,
             entry.litellm_params.model ?? entry.model_name,
+            pluginOptions,
           );
           if (modelsDevEntry) {
             enhanceModelEntry(modelEntry, modelsDevEntry);

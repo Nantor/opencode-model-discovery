@@ -78,7 +78,9 @@ LiteLLM's `/v2/model/info` does not always report every field OpenCode understan
         "baseURL": "http://localhost:4000/v1",
         "opencode-model-discovery": {
           "discovery": true,
-          "enhanceFromModelsDev": true
+          "enhanceFromModelsDev": true,
+          "modelsDevIgnorePrefixes": ["US-", "EU-"],
+          "modelsDevIgnorePostfixes": ["-private", "-preview-route"]
         }
       }
     }
@@ -89,6 +91,8 @@ LiteLLM's `/v2/model/info` does not always report every field OpenCode understan
 Each discovered model is matched to an OpenCode catalog entry using LiteLLM's `litellm_provider` metadata (e.g. `openai`, `azure`, `vertex_ai-anthropic_models`) together with the resolved upstream model id. For models without provider metadata, explicit aliases and canonical model IDs in the local catalog cover known gateway route names; otherwise, only an unambiguous exact ID match is used. LiteLLM-derived fields always take precedence — catalog data only fills in fields that discovery left `undefined` (for example, adding `family` and `release_date` to a model whose cost and limit were already reported by `/v2/model/info`).
 
 The local catalog is maintained by OpenCode. If it is unavailable or malformed, the plugin logs a warning and discovery continues with LiteLLM-only data.
+
+Use `modelsDevIgnorePrefixes` and `modelsDevIgnorePostfixes` to ignore gateway-specific affixes during catalog name/ID lookup when `enhanceFromModelsDev` is enabled. For example, `EU-gpt-4o-private` can match `gpt-4o` with the settings above. Original matches take precedence. Otherwise, the longest matching prefix and postfix are each removed once, using case-sensitive literal matching (not regular expressions). Empty or non-string entries are ignored. Provider-specific and unambiguous fallback matching rules still apply. These options do not change discovered model keys, request IDs, or display names.
 
 ## Debugging Provider Configuration
 
@@ -118,7 +122,7 @@ The command requires OpenCode V2. It calls `opencode api get /api/config` for th
 
 Model IDs are normalized into display names. For example, `openai/gpt-4o-mini` becomes `Gpt 4o Mini`.
 
-`discovery`, `discoveryBaseURL`, `discoveryTimeout`, `discoveryCache`, and `enhanceFromModelsDev` are consumed by the plugin (nested under the `opencode-model-discovery` options key) and are not passed to the underlying AI SDK provider.
+`discovery`, `discoveryBaseURL`, `discoveryTimeout`, `discoveryCache`, `enhanceFromModelsDev`, `modelsDevIgnorePrefixes`, and `modelsDevIgnorePostfixes` are consumed by the plugin (nested under the `opencode-model-discovery` settings key) and are not passed to the underlying provider runtime.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
 

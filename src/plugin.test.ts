@@ -532,7 +532,7 @@ describe("applyDiscovery", () => {
     expect(models["gpt-4o"]).toBeDefined();
   });
 
-  it("enhances discovered models with models.dev data when enabled", async () => {
+  it.each(["gpt-4o", "EU-gpt-4o-private"])("enhances discovered %s with models.dev data when enabled", async (modelID) => {
     // The plugin reads OpenCode's local models.dev catalog snapshot rather
     // than fetching models.dev at runtime.
     const cacheDirectory = join(tmpdir(), `opencode-models-${process.pid}-${Date.now()}`);
@@ -563,12 +563,12 @@ describe("applyDiscovery", () => {
         ok: true,
         json: async () =>
           url.includes("/models")
-            ? { data: [{ id: "gpt-4o" }] }
+            ? { data: [{ id: modelID }] }
             : {
                 data: [
                   {
-                    model_name: "gpt-4o",
-                    litellm_params: { model: "gpt-4o" },
+                    model_name: modelID,
+                    litellm_params: { model: modelID },
                     model_info: {
                       max_tokens: 128000,
                       max_output_tokens: 16384,
@@ -585,7 +585,12 @@ describe("applyDiscovery", () => {
         gateway: {
           options: {
             baseURL: "https://llm.example.com/v1",
-            "opencode-model-discovery": { discovery: true, enhanceFromModelsDev: true },
+            "opencode-model-discovery": {
+              discovery: true,
+              enhanceFromModelsDev: true,
+              modelsDevIgnorePrefixes: ["EU-"],
+              modelsDevIgnorePostfixes: ["-private"],
+            },
           },
         },
       },
@@ -593,7 +598,9 @@ describe("applyDiscovery", () => {
 
     await applyDiscovery(config);
 
-    const model = providerFor(config, "gateway").models?.["gpt-4o"];
+    const model = providerFor(config, "gateway").models?.[modelID];
+    expect(Object.keys(providerFor(config, "gateway").models ?? {})).toEqual([modelID]);
+    expect(providerFor(config, "gateway").options?.["opencode-model-discovery"]).toBeUndefined();
     expect(model?.family).toBe("gpt");
     expect(model?.release_date).toBe("2024-05-13");
     expect(model?.temperature).toBe(true);

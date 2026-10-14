@@ -203,6 +203,8 @@ export interface OpenCodeDiscoveryOptions {
   discoveryTimeout?: number;
   discoveryCache?: string;
   enhanceFromModelsDev?: boolean;
+  modelsDevIgnorePrefixes?: string[];
+  modelsDevIgnorePostfixes?: string[];
 }
 
 export interface OpenCodeProvider {

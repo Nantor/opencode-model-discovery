@@ -8,6 +8,7 @@ import type {
   ModelsDevModel,
   ModelsDevProvider,
   OpenCodeModelEntry,
+  OpenCodeDiscoveryOptions,
 } from "./types.js";
 import { errorMessage, safeLog } from "./utils.js";
 
@@ -64,21 +65,6 @@ const LITELLM_PROVIDER_TO_MODELS_DEV: Record<string, string> = {
 // Provider gateways sometimes expose a model under a shorter route ID than
 // its canonical models.dev ID. Keep these explicit so fallback metadata stays
 // deterministic even when an ID is shared by several catalog providers.
-const MODELS_DEV_FALLBACK_ALIASES: Record<string, string> = {
-  "devstral-2-123b": "mistral/devstral-2512",
-  "gemma-3-27b-it": "google/gemma-3-27b-it",
-  "gpt-image-1.5": "openai/gpt-image-1.5",
-  "gpt-oss-120b": "openai/gpt-oss-120b",
-  "gpt-oss-20b": "openai/gpt-oss-20b",
-  "nemotron-3-super-120b": "nvidia/nemotron-3-super-120b-a12b",
-  "nova-2-lite": "amazon/nova-2-lite",
-  "qwen3-235b": "alibaba/qwen3-235b-a22b",
-  "qwen3-coder-480b": "alibaba/qwen3-coder-480b-a35b-instruct",
-  "qwen3.6-27b": "alibaba/qwen3.6-27b",
-  "US-gemini-3.1-flash-image-preview": "google/gemini-3.1-flash-image-preview",
-  "US-gemini-3.6-flash": "google/gemini-3.6-flash",
-  "US-gpt-5.4": "openai/gpt-5.4",
-};
 
 function isModelsDevData(value: unknown): value is ModelsDevData {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -163,7 +149,7 @@ function findFallbackModelsDevEntry(
  * the lookup key. When LiteLLM omits provider metadata, uses an exact catalog
  * ID match only when it occurs under exactly one models.dev provider.
  */
-export function findModelsDevEntry(
+function findModelsDevEntryByID(
   data: ModelsDevData,
   litellmProvider: string | undefined,
   resolvedID: string,
@@ -177,6 +163,43 @@ export function findModelsDevEntry(
 
   const strippedID = stripLiteLLMPrefix(resolvedID, litellmProvider);
   return provider.models[strippedID] ?? provider.models[resolvedID];
+}
+
+function ignoredAffixes(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    .sort((left, right) => right.length - left.length);
+}
+
+/** Try the original ID first; configured affixes only affect fallback lookup. */
+export function findModelsDevEntry(
+  data: ModelsDevData,
+  litellmProvider: string | undefined,
+  resolvedID: string,
+  options?: Pick<OpenCodeDiscoveryOptions, "modelsDevIgnorePrefixes" | "modelsDevIgnorePostfixes">,
+): ModelsDevModel | undefined {
+  const original = findModelsDevEntryByID(data, litellmProvider, resolvedID);
+  if (original) return original;
+
+  const prefixes = ignoredAffixes(options?.modelsDevIgnorePrefixes);
+  const postfixes = ignoredAffixes(options?.modelsDevIgnorePostfixes);
+  // Also handle an affix immediately after a redundant LiteLLM provider path.
+  const candidates = new Set([
+    resolvedID,
+    litellmProvider ? stripLiteLLMPrefix(resolvedID, litellmProvider) : resolvedID,
+  ]);
+  for (const candidate of candidates) {
+    let id = candidate;
+    const prefix = prefixes.find((value) => id.startsWith(value));
+    if (prefix) id = id.slice(prefix.length);
+    const postfix = postfixes.find((value) => id.endsWith(value));
+    if (postfix) id = id.slice(0, -postfix.length);
+    if (!id || id === candidate) continue;
+    const match = findModelsDevEntryByID(data, litellmProvider, id);
+    if (match) return match;
+  }
+  return undefined;
 }
 
 /**
