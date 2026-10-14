@@ -90,29 +90,29 @@ Each discovered model is matched to an OpenCode catalog entry using LiteLLM's `l
 
 The local catalog is maintained by OpenCode. If it is unavailable or malformed, the plugin logs a warning and discovery continues with LiteLLM-only data.
 
-## Resolved Configuration
+## Debugging Provider Configuration
 
-Use OpenCode's debug command to print the final merged configuration after discovery:
+Use OpenCode V2's API command to inspect the configuration sources for the current directory:
 
 ```bash
-opencode debug config
+opencode api get /api/config
 ```
 
 To save it for inspection:
 
 ```bash
-opencode debug config > resolved-opencode.json
+opencode api get /api/config > opencode-config-entries.json
 ```
 
-The output includes discovered models, manual overrides, and all inherited OpenCode settings. It can include API keys and other secrets, so do not commit or share it.
+OpenCode V2 returns configuration documents and discovery directories in priority order (lowest to highest), not a merged runtime model inventory. The documents include configured model overrides and inherited OpenCode settings. They can include API keys and other secrets, so do not commit or share the output.
 
-To inspect the unprocessed LiteLLM responses alongside that resolved configuration for one provider, run:
+To inspect the unprocessed LiteLLM responses alongside the merged configuration for one provider, run:
 
 ```bash
 npm run debug:provider -- litellm
 ```
 
-The command loads both `~/.config/opencode/opencode.json` and `opencode.jsonc` when present, with entries in `opencode.jsonc` taking precedence for duplicate provider IDs. It uses the provider's `discoveryBaseURL` when configured (otherwise `baseURL`), sends its configured API key, and writes the raw `/v1/models`, raw `/v2/model/info`, and a reduced `opencode debug config` containing only `$schema` and the selected provider to `debug/<provider-id>.*.json`. It also writes `debug/<provider-id>.models.csv`, which lists every model ID and whether it was found in `/v1/models`, `/v2/model/info`, or the resolved provider configuration. Its `config_name_only` column is true when the resolved configuration entry contains only a `name`. These files can include API keys, model metadata, and other secrets; do not commit or share them.
+The command requires OpenCode V2. It calls `opencode api get /api/config` for the current directory and merges the returned configuration documents in priority order, including global and project settings. It reads the selected provider from `providers` and its options from `settings`. It uses `settings["opencode-model-discovery"].discoveryBaseURL` when configured (otherwise `settings.baseURL`), sends `settings.apiKey`, and writes the raw `/v1/models`, raw `/v2/model/info`, and a reduced configuration containing only `$schema` (when present) and the selected `providers` entry to `debug/<provider-id>.*.json`. It also writes `debug/<provider-id>.models.csv`, which lists every model ID and whether it was found in `/v1/models`, `/v2/model/info`, or the merged provider configuration. The `config` column describes configured models, not the plugin's runtime-discovered inventory. Its `config_name_only` column is true when the configuration entry contains only a `name`. These files can include API keys, model metadata, and other secrets; do not commit or share them.
 
 ## Model Names
 

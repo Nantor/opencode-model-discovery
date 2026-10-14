@@ -1,107 +1,87 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 
-import type { OpenCodeConfig, OpenCodeProvider } from "../src/types.js";
+import type { OpenCodeDiscoveryOptions } from "../src/types.js";
+
+interface ProviderSettings {
+  baseURL?: string;
+  apiKey?: string;
+  "opencode-model-discovery"?: OpenCodeDiscoveryOptions;
+}
+
+interface ProviderConfig {
+  settings?: ProviderSettings;
+  models?: Record<string, Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+interface DebugConfig {
+  $schema?: string;
+  providers?: Record<string, ProviderConfig>;
+  [key: string]: unknown;
+}
 
 const execFileAsync = promisify(execFile);
-const configDirectory = join(homedir(), ".config", "opencode");
-const configPaths = [
-  join(configDirectory, "opencode.json"),
-  join(configDirectory, "opencode.jsonc"),
-];
 const resultsDirectory = resolve("debug");
 
 function normalizeBaseURL(baseURL: string): string {
   return baseURL.replace(/\/+$/, "").replace(/\/v1$/, "");
 }
 
-function parseJSONC(source: string, path: string): OpenCodeConfig {
-  let output = "";
-  let inString = false;
-  let escaped = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-    const nextCharacter = source[index + 1];
-    if (inString) {
-      output += character;
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === "\"") inString = false;
-      continue;
-    }
-    if (character === "\"") {
-      inString = true;
-      output += character;
-      continue;
-    }
-    if (character === "/" && nextCharacter === "/") {
-      while (index < source.length && source[index] !== "\n") index += 1;
-      output += "\n";
-      continue;
-    }
-    if (character === "/" && nextCharacter === "*") {
-      index += 2;
-      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) {
-        index += 1;
-      }
-      index += 1;
-      continue;
-    }
-    output += character;
+function mergeRecords(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = { ...target };
+  for (const [key, value] of Object.entries(source)) {
+    // Avoid prototype setters when merging provider and model IDs.
+    Object.defineProperty(result, key, {
+      value: isRecord(result[key]) && isRecord(value)
+        ? mergeRecords(result[key], value)
+        : value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
-
-  try {
-    return JSON.parse(output.replace(/,\s*([}\]])/g, "$1")) as OpenCodeConfig;
-  } catch (error) {
-    throw new Error(`Could not parse ${path}: ${error instanceof Error ? error.message : String(error)}`, {cause: error});
-  }
+  return result;
 }
 
-async function readConfig(path: string): Promise<OpenCodeConfig | undefined> {
+export function parseConfigEntries(output: string): { config: DebugConfig; paths: string[] } {
+  let entries: unknown;
   try {
-    return parseJSONC(await readFile(path, "utf8"), path);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-async function loadConfig(): Promise<{ config: OpenCodeConfig; paths: string[] }> {
-  const configs = await Promise.all(configPaths.map(readConfig));
-  const paths = configPaths.filter((_, index) => configs[index] !== undefined);
-  if (paths.length === 0) {
-    throw new Error(`No OpenCode config found in ${configDirectory}`);
-  }
-
-  return {
-    config: {
-      provider: Object.assign({}, ...configs.map((config) => config?.provider)),
-    },
-    paths,
-  };
-}
-
-function selectedProviderConfig(output: string, providerID: string): OpenCodeConfig {
-  let config: OpenCodeConfig;
-  try {
-    config = JSON.parse(output) as OpenCodeConfig;
+    entries = JSON.parse(output) as unknown;
   } catch (error) {
     throw new Error(
-      `Could not parse opencode debug config output: ${error instanceof Error ? error.message : String(error)}`,
-        {cause: error}
+      `Could not parse opencode api get /api/config output: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
+  if (!Array.isArray(entries)) {
+    throw new Error("Expected configuration entries from opencode api get /api/config");
+  }
+  let config: DebugConfig = {};
+  const paths: string[] = [];
+  for (const entry of entries) {
+    if (!isRecord(entry) || entry.type !== "document") continue;
+    if (!isRecord(entry.info)) throw new Error("Invalid OpenCode configuration document");
+    config = mergeRecords(config, entry.info) as DebugConfig;
+    if (typeof entry.path === "string") paths.push(entry.path);
+  }
+  return { config, paths };
+}
 
-  const provider = config.provider?.[providerID];
+export function selectedProviderConfig(config: DebugConfig, providerID: string): DebugConfig {
+  const provider = config.providers?.[providerID];
   if (!provider) {
-    throw new Error(`Provider "${providerID}" was not found in opencode debug config output`);
+    throw new Error(`Provider "${providerID}" was not found in OpenCode V2 configuration`);
   }
   return {
     ...(config.$schema === undefined ? {} : { $schema: config.$schema }),
-    provider: { [providerID]: provider },
+    providers: { [providerID]: provider },
   };
 }
 
@@ -115,7 +95,7 @@ async function writeJSON(path: string, value: unknown): Promise<void> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function modelIDs(response: unknown, field: "id" | "model_name"): Set<string> {
@@ -131,15 +111,15 @@ function csvValue(value: string): string {
   return `"${value.replaceAll("\"", "\"\"")}"`;
 }
 
-function modelSummaryCSV(
+export function modelSummaryCSV(
   models: unknown,
   modelInfo: unknown,
-  config: OpenCodeConfig,
+  config: DebugConfig,
   providerID: string,
 ): string {
   const fromModels = modelIDs(models, "id");
   const fromModelInfo = modelIDs(modelInfo, "model_name");
-  const configModelEntries = config.provider?.[providerID]?.models ?? {};
+  const configModelEntries = config.providers?.[providerID]?.models ?? {};
   const configModels = new Set(Object.keys(configModelEntries));
   const allModelIDs = new Set([...fromModels, ...fromModelInfo, ...configModels]);
   const rows = [...allModelIDs]
@@ -157,15 +137,12 @@ function modelSummaryCSV(
   return ["model,models,model_info,config,config_name_only", ...rows].join("\n") + "\n";
 }
 
-function providerOptions(providerID: string, config: OpenCodeConfig): OpenCodeProvider {
-  const provider = config.provider?.[providerID];
-  if (!provider) {
-    throw new Error(`Provider "${providerID}" was not found in ${configPaths.join(" or ")}`);
+export function providerSettings(providerID: string, config: DebugConfig): ProviderSettings {
+  const provider = selectedProviderConfig(config, providerID).providers![providerID];
+  if (!provider.settings?.baseURL) {
+    throw new Error(`Provider "${providerID}" has no settings.baseURL`);
   }
-  if (!provider.options?.baseURL) {
-    throw new Error(`Provider "${providerID}" has no options.baseURL`);
-  }
-  return provider;
+  return provider.settings;
 }
 
 async function fetchRaw(
@@ -191,9 +168,11 @@ async function main(): Promise<void> {
   const providerID = process.argv[2] ?? usage();
   if (process.argv.length !== 3) usage();
 
-  const { config, paths } = await loadConfig();
-  const provider = providerOptions(providerID, config);
-  const options = provider.options!;
+  const { stdout } = await execFileAsync("opencode", ["api", "get", "/api/config"], {
+    maxBuffer: 50 * 1024 * 1024,
+  });
+  const { config, paths } = parseConfigEntries(stdout);
+  const options = providerSettings(providerID, config);
   const discoveryOptions = options["opencode-model-discovery"];
   const baseURL = typeof discoveryOptions?.discoveryBaseURL === "string"
     ? discoveryOptions.discoveryBaseURL
@@ -220,10 +199,7 @@ async function main(): Promise<void> {
     writeJSON(modelInfoPath, modelInfo),
   ]);
 
-  const { stdout } = await execFileAsync("opencode", ["debug", "config"], {
-    maxBuffer: 50 * 1024 * 1024,
-  });
-  const resolvedConfig = selectedProviderConfig(stdout, providerID);
+  const resolvedConfig = selectedProviderConfig(config, providerID);
   const configOutputPath = `${prefix}.opencode-config.json`;
   const summaryPath = `${prefix}.models.csv`;
   await Promise.all([
@@ -238,7 +214,9 @@ async function main(): Promise<void> {
   console.log(`  ${summaryPath}`);
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
