@@ -5,9 +5,27 @@ import {
   parseConfigEntries,
   providerSettings,
   selectedProviderConfig,
-} from "../scripts/debug-provider.js";
+  runtimeProviderConfig,
+} from "./debug-provider.js";
 
 describe("OpenCode V2 provider debugging", () => {
+  it("combines resolved provider and model APIs without including other providers", () => {
+    const model = { id: "discovered", providerID: "proxy", name: "Discovered", limit: { context: 1000 } };
+    const config = runtimeProviderConfig(
+      JSON.stringify({ data: { id: "proxy", name: "Proxy", settings: { baseURL: "https://proxy/v1" } } }),
+      JSON.stringify({ data: [model, { id: "other", providerID: "other" }] }),
+      "proxy",
+    );
+    expect(config.providers?.proxy.models).toEqual({ discovered: model });
+    expect(modelSummaryCSV({ data: [] }, { data: [] }, {}, "proxy", config)).toBe(
+      'model,models,model_info,config,config_name_only,runtime\n"discovered",false,false,false,false,true\n',
+    );
+    expect(() => runtimeProviderConfig('{"data":{"id":"other"}}', '{"data":[]}', "proxy"))
+      .toThrow("Invalid runtime provider response");
+    expect(() => runtimeProviderConfig('{"data":{"id":"proxy"}}', '{}', "proxy"))
+      .toThrow("Invalid runtime model list response");
+  });
+
   it("merges configuration documents in API priority order and ignores directories", () => {
     const { config, paths } = parseConfigEntries(JSON.stringify([
       { type: "directory", path: "/project/.opencode" },

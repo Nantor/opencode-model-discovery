@@ -421,6 +421,39 @@ describe("applyDiscovery", () => {
     expect(providerFor(config, "gateway").models?.["provider-specific-chat-model"]).toBeDefined();
   });
 
+  it.each(["missing", "conflicting", "unavailable"])("excludes image-generation modes from /models when model info is %s", async (infoState) => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/models")) {
+        return {
+          ok: true,
+          json: async () => ({ data: [
+            { id: "gpt-4o", mode: "chat" },
+            { id: "gpt-image-1", mode: "image_generation" },
+            { id: "image-route*", mode: "IMAGE_GENERATION" },
+          ] }),
+        } as Response;
+      }
+      if (infoState === "unavailable") throw new Error("Model info unavailable");
+      return {
+        ok: true,
+        json: async () => ({ data: infoState === "missing" ? [] : [
+          { model_name: "gpt-image-1", litellm_params: { model: "gpt-image-1" }, model_info: { mode: "chat" } },
+          { model_name: "image-route*", litellm_params: { model: "image-route*" }, model_info: { mode: "chat" } },
+          { model_name: "image-alias*", litellm_params: { model: "gpt-image-1" }, model_info: {} },
+        ] }),
+      } as Response;
+    });
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
+        },
+      },
+    };
+    await applyDiscovery(config);
+    expect(Object.keys(providerFor(config, "gateway").models ?? {})).toEqual(["gpt-4o"]);
+  });
+
   it("times out discovery requests and consumes the timeout option", async () => {
     vi.mocked(fetch).mockImplementation((_input, init) =>
       new Promise((_resolve, reject) => {
@@ -494,7 +527,7 @@ describe("applyDiscovery", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("falls back to the resolved model id for wildcard routes missing from /v1/models", async () => {
+  it("uses model_name for wildcard routes missing from /v1/models", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,
       json: async () =>
@@ -506,6 +539,7 @@ describe("applyDiscovery", () => {
                   model_name: "claude-opus-4-5*",
                   litellm_params: { model: "vertex_ai/claude-opus-4-5@20251101" },
                   model_info: {
+                    key: "internal-deployment-key",
                     max_tokens: 64000,
                     max_output_tokens: 64000,
                     max_input_tokens: 200000,
@@ -527,28 +561,94 @@ describe("applyDiscovery", () => {
     await applyDiscovery(config);
 
     const models = providerFor(config, "gateway").models ?? {};
-    expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeDefined();
-    expect(models["claude-opus-4-5*"]).toBeUndefined();
+    expect(models["vertex_ai/claude-opus-4-5@20251101"]).toBeUndefined();
+    expect(models["internal-deployment-key"]).toBeUndefined();
+    expect(models["claude-opus-4-5*"]?.limit).toEqual({
+      context: 200000,
+      input: 200000,
+      output: 64000,
+    });
     expect(models["gpt-4o"]).toBeDefined();
   });
 
-  it.each(["gpt-4o", "EU-gpt-4o-private"])("enhances discovered %s with models.dev data when enabled", async (modelID) => {
+  it("uses model_name when /v1/models matches an upstream alias and deduplicates routes", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [{ id: "openai/gpt-4o" }, { id: "public-route" }] }
+          : {
+              data: [{
+                model_name: "public-route",
+                litellm_params: { model: "openai/gpt-4o" },
+                model_info: { key: "internal-key", supports_function_calling: true },
+              }],
+            },
+    }) as Response);
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    const models = providerFor(config, "gateway").models ?? {};
+    expect(Object.keys(models)).toEqual(["public-route"]);
+    expect(models["public-route"]?.tool_call).toBe(true);
+  });
+
+  it("keeps distinct wildcard model_names without requiring unique upstream models", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
+      ok: true,
+      json: async () =>
+        input.toString().includes("/models")
+          ? { data: [] }
+          : {
+              data: [
+                { model_name: "route-a*", litellm_params: { model: "shared-upstream" }, model_info: {} },
+                { model_name: "route-b*", litellm_params: { model: "shared-upstream" }, model_info: {} },
+                { model_name: "route-c*", litellm_params: {}, model_info: { key: "internal-key" } },
+              ],
+            },
+    }) as Response);
+    const config: OpenCodeConfig = {
+      provider: {
+        gateway: {
+          options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": { discovery: true } },
+        },
+      },
+    };
+
+    await applyDiscovery(config);
+
+    expect(Object.keys(providerFor(config, "gateway").models ?? {})).toEqual([
+      "route-a*", "route-b*", "route-c*",
+    ]);
+  });
+
+  it.each([
+    ["gpt-4o", "openai"],
+    ["EU-gpt-4o-private", "unknown-provider"],
+    ["EU-gpt-4o-private", undefined],
+  ])("enhances discovered %s with models.dev data regardless of provider %s", async (modelID, litellmProvider) => {
     // The plugin reads OpenCode's local models.dev catalog snapshot rather
     // than fetching models.dev at runtime.
     const cacheDirectory = join(tmpdir(), `opencode-models-${process.pid}-${Date.now()}`);
     process.env.XDG_CACHE_HOME = cacheDirectory;
     const catalog: ModelsDevData = {
-      openai: {
-        id: "openai",
-        npm: "@ai-sdk/openai",
-        name: "OpenAI",
+      unrelated: {
+        id: "unrelated",
         models: {
-          "gpt-4o": {
-            id: "gpt-4o",
+          "vendor/gpt-4o": {
+            id: "vendor/gpt-4o",
             name: "GPT-4o",
             family: "gpt",
             release_date: "2024-05-13",
             temperature: true,
+            cost: { input: 2.5, output: 10, cache_read: 1.25, cache_write: 3 },
             modalities: { input: ["text", "image"], output: ["text"] },
           },
         },
@@ -572,7 +672,7 @@ describe("applyDiscovery", () => {
                     model_info: {
                       max_tokens: 128000,
                       max_output_tokens: 16384,
-                      litellm_provider: "openai",
+                      litellm_provider: litellmProvider,
                     },
                   },
                 ],
@@ -604,6 +704,7 @@ describe("applyDiscovery", () => {
     expect(model?.family).toBe("gpt");
     expect(model?.release_date).toBe("2024-05-13");
     expect(model?.temperature).toBe(true);
+    expect(model?.cost).toBeUndefined();
     // LiteLLM-derived limit must remain untouched by the enhancement pass.
     expect(model?.limit).toEqual({ context: 128000, output: 16384 });
 

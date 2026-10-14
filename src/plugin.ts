@@ -32,7 +32,7 @@ type RequestBodyTransform = (
 
 const MAX_COMPLETION_TOKENS = Symbol("maxCompletionTokens");
 
-// LiteLLM `model_info.mode` values that can never serve /chat/completions.
+// LiteLLM `/models` and `model_info.mode` values that can never serve /chat/completions.
 // `chat`, `completion` and `responses` are deliberately absent: LiteLLM
 // routes chat requests to those deployments.
 const ENDPOINT_ONLY_MODEL_MODES = new Set([
@@ -83,28 +83,27 @@ function entriesForModels(
 
   const known = new Set<string>();
   const resolved: LiteLLMModelInfoEntry[] = [];
-  for (const id of modelIDs) {
+  for (const modelID of modelIDs) {
+    const info = byID.get(modelID);
+    // Metadata may match an upstream alias, but only model_name is the
+    // public route ID. Never expose litellm_params.model or model_info.key.
+    const id = info?.model_name ?? modelID;
     if (known.has(id)) continue;
     known.add(id);
-    const info = byID.get(id);
     resolved.push(
       info
-        ? { ...info, model_name: id }
+        ? info
         : { model_name: id, litellm_params: { model: id }, model_info: {} },
     );
   }
 
-  // Wildcard routes missing from /v1/models expose their usable id only via
-  // litellm_params.model. Add those as a fallback, but preserve the exact
-  // route ID when /v1/models already reported it.
-  const wildcardTargets = new Set<string>();
+  // Keep wildcard routes missing from /v1/models under their public names,
+  // even when multiple routes share an upstream deployment.
   for (const entry of infoEntries) {
     if (!entry.model_name.endsWith("*")) continue;
     if (known.has(entry.model_name)) continue;
-    const target = entry.litellm_params.model;
-    if (!target || known.has(target) || wildcardTargets.has(target)) continue;
-    wildcardTargets.add(target);
-    resolved.push({ ...entry, model_name: target, litellm_params: entry.litellm_params });
+    known.add(entry.model_name);
+    resolved.push(entry);
   }
 
   return resolved;
@@ -241,10 +240,19 @@ export async function discoverProviderModels(
       );
     }
 
+    const excludedModelIDs = new Set(
+      models
+        .filter((model) => typeof model.mode === "string" && ENDPOINT_ONLY_MODEL_MODES.has(model.mode.toLowerCase()))
+        .map((model) => model.id),
+    );
     const discoveredEntries = entriesForModels(
       models.map((model) => model.id),
       infoEntries,
-    ).filter(isOpenCodeModel);
+    ).filter((entry) =>
+      !excludedModelIDs.has(entry.model_name) &&
+      !excludedModelIDs.has(entry.litellm_params.model ?? entry.model_name) &&
+      isOpenCodeModel(entry),
+    );
     const discovered = buildProviderConfig(
       discoveredEntries,
       options.baseURL,
@@ -261,7 +269,6 @@ export async function discoverProviderModels(
           if (!modelEntry) continue;
           const modelsDevEntry = findModelsDevEntry(
             modelsDevData,
-            entry.model_info.litellm_provider,
             entry.litellm_params.model ?? entry.model_name,
             pluginOptions,
           );

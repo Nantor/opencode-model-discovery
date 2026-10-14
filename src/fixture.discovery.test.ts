@@ -16,7 +16,7 @@ function loadFixture(name: string): unknown {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-const v1Models = loadFixture("v1.models.json") as { data: { id: string }[] };
+const v1Models = loadFixture("v1.models.json") as { data: { id: string; mode?: string }[] };
 const v2ModelInfo = loadFixture("v2.model.info.json") as {
   data: {
     model_name: string;
@@ -64,7 +64,13 @@ describe("applyDiscovery with real fixture responses", () => {
         .map((entry) => entry.model_name),
     );
     for (const model of v1Models.data) {
-      if (endpointOnlyModelIDs.has(model.id)) continue;
+      if (["embedding", "image_generation"].includes(model.mode ?? "")) endpointOnlyModelIDs.add(model.id);
+    }
+    for (const model of v1Models.data) {
+      if (endpointOnlyModelIDs.has(model.id)) {
+        expect(models[model.id]).toBeUndefined();
+        continue;
+      }
       expect(models[model.id]).toBeDefined();
     }
     expect(models["qwen-3-vl-embedding-2b-sovereign"]).toBeUndefined();

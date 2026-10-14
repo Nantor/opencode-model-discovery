@@ -16,10 +16,10 @@ import { errorMessage, safeLog } from "./utils.js";
 // models.dev enhancement
 // ---------------------------------------------------------------------------
 //
-// Fills gaps in discovered model metadata (family, release date, cost,
+// Fills gaps in discovered model metadata (family, release date,
 // limits, modalities, ...) using the public models.dev catalog. LiteLLM
 // discovery data always wins; models.dev is only used to fill fields that
-// LiteLLM's /v2/model/info did not report.
+// LiteLLM's /v2/model/info did not report. Pricing is never copied from the catalog.
 
 function modelsDevCachePath(): string {
   return join(
@@ -29,51 +29,20 @@ function modelsDevCachePath(): string {
   );
 }
 
-// Maps LiteLLM's `litellm_provider` metadata to the corresponding models.dev
-// provider id. Only providers with a confident, unambiguous mapping are
-// listed here; anything else is treated as "no match" rather than guessed,
-// since a wrong guess could attach another provider's pricing to a model.
-const LITELLM_PROVIDER_TO_MODELS_DEV: Record<string, string> = {
-  openai: "openai",
-  azure: "azure",
-  anthropic: "anthropic",
-  vertex_ai: "google-vertex",
-  "vertex_ai-language-models": "google-vertex",
-  "vertex_ai-anthropic_models": "google-vertex-anthropic",
-  "vertex_ai-image-models": "google-vertex",
-  bedrock: "amazon-bedrock",
-  bedrock_converse: "amazon-bedrock",
-  gemini: "google",
-  mistral: "mistral",
-  codestral: "mistral",
-  cohere: "cohere",
-  cohere_chat: "cohere",
-  groq: "groq",
-  deepseek: "deepseek",
-  xai: "xai",
-  perplexity: "perplexity",
-  cerebras: "cerebras",
-  databricks: "databricks",
-  watsonx: "watsonx",
-  huggingface: "huggingface",
-  fireworks_ai: "fireworks-ai",
-  together_ai: "togetherai",
-  openrouter: "openrouter",
-  nvidia_nim: "nvidia",
-};
-
-// Provider gateways sometimes expose a model under a shorter route ID than
-// its canonical models.dev ID. Keep these explicit so fallback metadata stays
-// deterministic even when an ID is shared by several catalog providers.
-
 function isModelsDevData(value: unknown): value is ModelsDevData {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   return Object.values(value).every(
-    (provider) =>
-      typeof provider === "object" &&
-      provider !== null &&
-      typeof (provider as Partial<ModelsDevProvider>).models === "object" &&
-      (provider as Partial<ModelsDevProvider>).models !== null,
+    (provider) => {
+      if (typeof provider !== "object" || provider === null || Array.isArray(provider)) return false;
+      const { id, models } = provider as Partial<ModelsDevProvider>;
+      if (typeof id !== "string" || typeof models !== "object" || models === null || Array.isArray(models)) {
+        return false;
+      }
+      return Object.values(models).every(
+        (model) => typeof model === "object" && model !== null && !Array.isArray(model) &&
+          typeof model.id === "string",
+      );
+    },
   );
 }
 
@@ -98,73 +67,6 @@ export async function getModelsDevData(
   }
 }
 
-/**
- * Strip a single leading path segment from a LiteLLM-resolved model id when
- * it matches the model's `litellm_provider`, e.g. "azure/gpt-4o" -> "gpt-4o"
- * or "vertex_ai/claude-opus-4-5@20251101" -> "claude-opus-4-5@20251101".
- */
-function stripLiteLLMPrefix(id: string, litellmProvider: string): string {
-  const separatorIndex = id.indexOf("/");
-  if (separatorIndex === -1) return id;
-  const prefix = id.slice(0, separatorIndex).toLowerCase();
-  if (!litellmProvider.toLowerCase().startsWith(prefix)) return id;
-  return id.slice(separatorIndex + 1);
-}
-
-function fallbackModelsDevID(id: string): string {
-  // LiteLLM regional routes such as US-gpt-5.4 use the upstream model ID in
-  // models.dev without the region prefix.
-  return id.replace(/^US-/, "");
-}
-
-function findUnambiguousModelsDevEntry(
-  data: ModelsDevData,
-  resolvedID: string,
-): ModelsDevModel | undefined {
-  const modelID = fallbackModelsDevID(resolvedID);
-  const matches = Object.values(data)
-    .map((provider) => provider.models[modelID])
-    .filter((model): model is ModelsDevModel => model !== undefined);
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
-function findFallbackModelsDevEntry(
-  data: ModelsDevData,
-  resolvedID: string,
-): ModelsDevModel | undefined {
-  const canonicalID = MODELS_DEV_FALLBACK_ALIASES[resolvedID];
-  if (canonicalID) {
-    const matches = Object.values(data)
-      .flatMap((provider) => Object.values(provider.models))
-      .filter((model) => model.id === canonicalID || model.canonical_model_id === canonicalID);
-    return matches.find((model) => model.id === canonicalID) ?? matches[0];
-  }
-  return findUnambiguousModelsDevEntry(data, resolvedID);
-}
-
-/**
- * Find the models.dev entry for a discovered model, using its
- * `litellm_provider` metadata to select the models.dev provider and the
- * LiteLLM-resolved model id (with any redundant provider prefix stripped) as
- * the lookup key. When LiteLLM omits provider metadata, uses an exact catalog
- * ID match only when it occurs under exactly one models.dev provider.
- */
-function findModelsDevEntryByID(
-  data: ModelsDevData,
-  litellmProvider: string | undefined,
-  resolvedID: string,
-): ModelsDevModel | undefined {
-  if (!litellmProvider) return findFallbackModelsDevEntry(data, resolvedID);
-  const providerID = LITELLM_PROVIDER_TO_MODELS_DEV[litellmProvider.toLowerCase()];
-  if (!providerID) return undefined;
-
-  const provider = data[providerID];
-  if (!provider?.models) return undefined;
-
-  const strippedID = stripLiteLLMPrefix(resolvedID, litellmProvider);
-  return provider.models[strippedID] ?? provider.models[resolvedID];
-}
-
 function ignoredAffixes(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -172,31 +74,23 @@ function ignoredAffixes(value: unknown): string[] {
     .sort((left, right) => right.length - left.length);
 }
 
-/** Try the original ID first; configured affixes only affect fallback lookup. */
+/** Find the first catalog model whose ID ends with the affix-cleaned ID, regardless of provider. */
 export function findModelsDevEntry(
   data: ModelsDevData,
-  litellmProvider: string | undefined,
   resolvedID: string,
   options?: Pick<OpenCodeDiscoveryOptions, "modelsDevIgnorePrefixes" | "modelsDevIgnorePostfixes">,
 ): ModelsDevModel | undefined {
-  const original = findModelsDevEntryByID(data, litellmProvider, resolvedID);
-  if (original) return original;
-
   const prefixes = ignoredAffixes(options?.modelsDevIgnorePrefixes);
   const postfixes = ignoredAffixes(options?.modelsDevIgnorePostfixes);
-  // Also handle an affix immediately after a redundant LiteLLM provider path.
-  const candidates = new Set([
-    resolvedID,
-    litellmProvider ? stripLiteLLMPrefix(resolvedID, litellmProvider) : resolvedID,
-  ]);
-  for (const candidate of candidates) {
-    let id = candidate;
-    const prefix = prefixes.find((value) => id.startsWith(value));
-    if (prefix) id = id.slice(prefix.length);
-    const postfix = postfixes.find((value) => id.endsWith(value));
-    if (postfix) id = id.slice(0, -postfix.length);
-    if (!id || id === candidate) continue;
-    const match = findModelsDevEntryByID(data, litellmProvider, id);
+  let id = resolvedID;
+  const prefix = prefixes.find((value) => id.startsWith(value));
+  if (prefix) id = id.slice(prefix.length);
+  const postfix = postfixes.find((value) => id.endsWith(value));
+  if (postfix) id = id.slice(0, -postfix.length);
+  if (!id) return undefined;
+
+  for (const provider of Object.values(data)) {
+    const match = Object.values(provider.models).find((model) => model.id.endsWith(id));
     if (match) return match;
   }
   return undefined;
@@ -205,7 +99,7 @@ export function findModelsDevEntry(
 /**
  * Fill gaps in a discovered model entry using models.dev metadata. Fields
  * already populated from LiteLLM discovery are left untouched; only fields
- * that are still `undefined` are set.
+ * that are still `undefined` are set. Pricing is never read from the catalog.
  */
 export function enhanceModelEntry(
   modelEntry: OpenCodeModelEntry,
@@ -237,18 +131,6 @@ export function enhanceModelEntry(
         context,
         output,
         ...(typeof input === "number" ? { input } : {}),
-      };
-    }
-  }
-
-  if (modelEntry.cost === undefined && modelsDevEntry.cost) {
-    const { input, output, cache_read, cache_write } = modelsDevEntry.cost;
-    if (typeof input === "number" && typeof output === "number") {
-      modelEntry.cost = {
-        input,
-        output,
-        ...(typeof cache_read === "number" ? { cache_read } : {}),
-        ...(typeof cache_write === "number" ? { cache_write } : {}),
       };
     }
   }

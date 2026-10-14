@@ -85,6 +85,38 @@ export function selectedProviderConfig(config: DebugConfig, providerID: string):
   };
 }
 
+/** V2 exposes resolved provider settings and model inventory as separate resources. */
+export function runtimeProviderConfig(
+  providerOutput: string,
+  modelsOutput: string,
+  providerID: string,
+): DebugConfig {
+  const providerResponse: unknown = JSON.parse(providerOutput);
+  const modelsResponse: unknown = JSON.parse(modelsOutput);
+  if (!isRecord(providerResponse) || !isRecord(providerResponse.data) ||
+      providerResponse.data.id !== providerID) {
+    throw new Error(`Invalid runtime provider response for "${providerID}"`);
+  }
+  if (!isRecord(modelsResponse) || !Array.isArray(modelsResponse.data)) {
+    throw new Error("Invalid runtime model list response");
+  }
+  const models: Record<string, Record<string, unknown>> = Object.fromEntries(
+    modelsResponse.data.flatMap((model: unknown) =>
+      isRecord(model) && model.providerID === providerID && typeof model.id === "string"
+        ? [[model.id, model]]
+        : [],
+    ),
+  );
+  return { providers: { [providerID]: { ...providerResponse.data, models } } };
+}
+
+async function apiGet(path: string): Promise<string> {
+  const { stdout } = await execFileAsync("opencode", ["api", "get", path], {
+    maxBuffer: 50 * 1024 * 1024,
+  });
+  return stdout;
+}
+
 function usage(): never {
   console.error("Usage: npm run debug:provider -- <provider-id>");
   process.exit(1);
@@ -116,12 +148,14 @@ export function modelSummaryCSV(
   modelInfo: unknown,
   config: DebugConfig,
   providerID: string,
+  runtimeConfig?: DebugConfig,
 ): string {
   const fromModels = modelIDs(models, "id");
   const fromModelInfo = modelIDs(modelInfo, "model_name");
   const configModelEntries = config.providers?.[providerID]?.models ?? {};
   const configModels = new Set(Object.keys(configModelEntries));
-  const allModelIDs = new Set([...fromModels, ...fromModelInfo, ...configModels]);
+  const runtimeModels = new Set(Object.keys(runtimeConfig?.providers?.[providerID]?.models ?? {}));
+  const allModelIDs = new Set([...fromModels, ...fromModelInfo, ...configModels, ...runtimeModels]);
   const rows = [...allModelIDs]
     .sort((left, right) => left.localeCompare(right))
     .map((modelID) => [
@@ -133,8 +167,10 @@ export function modelSummaryCSV(
         Object.keys(configModelEntries[modelID] ?? {}).length === 1 &&
           typeof configModelEntries[modelID]?.name === "string",
       ),
+      ...(runtimeConfig ? [String(runtimeModels.has(modelID))] : []),
     ].join(","));
-  return ["model,models,model_info,config,config_name_only", ...rows].join("\n") + "\n";
+  const header = "model,models,model_info,config,config_name_only" + (runtimeConfig ? ",runtime" : "");
+  return [header, ...rows].join("\n") + "\n";
 }
 
 export function providerSettings(providerID: string, config: DebugConfig): ProviderSettings {
@@ -168,9 +204,7 @@ async function main(): Promise<void> {
   const providerID = process.argv[2] ?? usage();
   if (process.argv.length !== 3) usage();
 
-  const { stdout } = await execFileAsync("opencode", ["api", "get", "/api/config"], {
-    maxBuffer: 50 * 1024 * 1024,
-  });
+  const stdout = await apiGet("/api/config");
   const { config, paths } = parseConfigEntries(stdout);
   const options = providerSettings(providerID, config);
   const discoveryOptions = options["opencode-model-discovery"];
@@ -200,18 +234,27 @@ async function main(): Promise<void> {
   ]);
 
   const resolvedConfig = selectedProviderConfig(config, providerID);
+  const [providerOutput, modelsOutput] = await Promise.all([
+    apiGet(`/api/provider/${encodeURIComponent(providerID)}`),
+    apiGet("/api/model"),
+  ]);
+  const runtimeConfig = runtimeProviderConfig(providerOutput, modelsOutput, providerID);
   const configOutputPath = `${prefix}.opencode-config.json`;
+  const runtimeOutputPath = `${prefix}.opencode-runtime.json`;
   const summaryPath = `${prefix}.models.csv`;
   await Promise.all([
     writeJSON(configOutputPath, resolvedConfig),
-    writeFile(summaryPath, modelSummaryCSV(models, modelInfo, resolvedConfig, providerID)),
+    writeJSON(runtimeOutputPath, runtimeConfig),
+    writeFile(summaryPath, modelSummaryCSV(models, modelInfo, resolvedConfig, providerID, runtimeConfig)),
   ]);
 
   console.log("Wrote discovery results:");
   console.log(`  ${modelsPath}`);
   console.log(`  ${modelInfoPath}`);
   console.log(`  ${configOutputPath}`);
+  console.log(`  ${runtimeOutputPath}`);
   console.log(`  ${summaryPath}`);
+  console.log("Runtime models are a current snapshot; initial plugin discovery may still be pending. Rerun after discovery completes if models are missing.");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

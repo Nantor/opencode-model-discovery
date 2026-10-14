@@ -9,6 +9,7 @@ export type Logger = (
 
 export interface LiteLLMModel {
   id: string;
+  mode?: string;
   object?: string;
   created?: number;
   owned_by?: string;
@@ -278,4 +279,5 @@ export interface ModelsDevProvider {
   models: Record<string, ModelsDevModel>;
 }
 
+/** OpenCode's local catalog groups model metadata by provider ID. */
 export type ModelsDevData = Record<string, ModelsDevProvider>;

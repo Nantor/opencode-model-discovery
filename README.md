@@ -34,9 +34,7 @@ Model limits map LiteLLM's `max_input_tokens` to `limit.context` and `max_output
 
 ### Wildcard routes
 
-Wildcard routes reported by `return_wildcard_routes=true` (e.g. `claude-opus-4-5*`) are kept under their exact route id as reported by `/v1/models`, since LiteLLM's router resolves that literal id back to the deployment behind it. If `/v2/model/info` reports a wildcard route that `/v1/models` did not list, the plugin falls back to surfacing it under its resolved `litellm_params.model` id (e.g. `vertex_ai/claude-opus-4-5@20251101`) so the model is not silently dropped.
-
-That fallback relies on LiteLLM's router accepting a deployment name (`litellm_params.model`) as the request model: when the requested model matches no `model_name` and no wildcard pattern, the router looks for deployments whose `litellm_params.model` equals the request (`Router._get_deployment_by_litellm_model`). This works on a default proxy, but requests may still be rejected if the key or team is restricted to specific model names, or if an access group filter removes the deployment. If a fallback model returns "model not found", ask the proxy operator to expose the route in `/v1/models` or add an explicit model entry with the route id you can call.
+Discovered model IDs always use `model_name` from matching `/v2/model/info` metadata, never `litellm_params.model` or `model_info.key`. Wildcard routes (e.g. `claude-opus-4-5*`) keep that exact `model_name`, including when `/v1/models` did not list them. Upstream names may be used to match metadata, but do not replace public route IDs. If no matching metadata is available, the plugin keeps the ID reported by `/v1/models` unchanged.
 
 Discovery requests time out after 10 seconds by default. Set `discoveryTimeout` to a non-negative number of milliseconds to override it. Discovery and metadata failures are logged but do not prevent OpenCode from starting; existing manually configured models remain available.
 
@@ -68,7 +66,7 @@ Restart OpenCode after changing plugin or provider configuration.
 
 ## models.dev Enhancement
 
-LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, `release_date`, `temperature`, or complete `cost`/`limit`/`modalities` data. Set `enhanceFromModelsDev` to `true` to fill those gaps from OpenCode's local models.dev catalog at `~/.cache/opencode/models.json`:
+LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, `release_date`, `temperature`, or complete `limit`/`modalities` data. Set `enhanceFromModelsDev` to `true` to fill those non-pricing gaps from OpenCode's local models.dev catalog at `~/.cache/opencode/models.json`. Pricing is never copied from this catalog:
 
 ```json
 {
@@ -88,11 +86,13 @@ LiteLLM's `/v2/model/info` does not always report every field OpenCode understan
 }
 ```
 
-Each discovered model is matched to an OpenCode catalog entry using LiteLLM's `litellm_provider` metadata (e.g. `openai`, `azure`, `vertex_ai-anthropic_models`) together with the resolved upstream model id. For models without provider metadata, explicit aliases and canonical model IDs in the local catalog cover known gateway route names; otherwise, only an unambiguous exact ID match is used. LiteLLM-derived fields always take precedence — catalog data only fills in fields that discovery left `undefined` (for example, adding `family` and `release_date` to a model whose cost and limit were already reported by `/v2/model/info`).
+The local catalog groups models by provider: each provider entry contains a `models` map. Each discovered model is matched using its resolved upstream model ID (`litellm_params.model`, or the discovered model name if absent). After removing configured prefixes and postfixes, the plugin searches every provider's models for the first model whose `id` ends with the cleaned ID. Matching is case-sensitive and ignores LiteLLM provider metadata. If several entries match, the first in catalog order wins. LiteLLM-derived fields always take precedence — catalog data only fills in non-pricing fields that discovery left `undefined` (for example, adding `family` and `release_date` to a model whose cost and limit were already reported by `/v2/model/info`). Costs remain sourced from LiteLLM discovery or explicit model configuration, never from `models.json`.
 
 The local catalog is maintained by OpenCode. If it is unavailable or malformed, the plugin logs a warning and discovery continues with LiteLLM-only data.
 
-Use `modelsDevIgnorePrefixes` and `modelsDevIgnorePostfixes` to ignore gateway-specific affixes during catalog name/ID lookup when `enhanceFromModelsDev` is enabled. For example, `EU-gpt-4o-private` can match `gpt-4o` with the settings above. Original matches take precedence. Otherwise, the longest matching prefix and postfix are each removed once, using case-sensitive literal matching (not regular expressions). Empty or non-string entries are ignored. Provider-specific and unambiguous fallback matching rules still apply. These options do not change discovered model keys, request IDs, or display names.
+Models with endpoint-only modes such as `mode: "image_generation"` in `/models` or `/v2/model/info` are excluded from discovery. The `/models` exclusion also applies when detailed model info is unavailable or reports a different mode.
+
+Use `modelsDevIgnorePrefixes` and `modelsDevIgnorePostfixes` to remove gateway-specific affixes before catalog ID lookup when `enhanceFromModelsDev` is enabled. For example, `EU-gpt-4o-private` can match `gpt-4o` or `openai/gpt-4o` with the settings above. The longest matching prefix and postfix are each removed once, using case-sensitive literal matching (not regular expressions). Empty or non-string entries are ignored, and an empty cleaned ID never matches. No provider path or regional prefix is stripped automatically; include it in the prefix settings if needed. These options do not change discovered model keys, request IDs, or display names.
 
 ## Debugging Provider Configuration
 
@@ -117,6 +117,8 @@ npm run debug:provider -- litellm
 ```
 
 The command requires OpenCode V2. It calls `opencode api get /api/config` for the current directory and merges the returned configuration documents in priority order, including global and project settings. It reads the selected provider from `providers` and its options from `settings`. It uses `settings["opencode-model-discovery"].discoveryBaseURL` when configured (otherwise `settings.baseURL`), sends `settings.apiKey`, and writes the raw `/v1/models`, raw `/v2/model/info`, and a reduced configuration containing only `$schema` (when present) and the selected `providers` entry to `debug/<provider-id>.*.json`. It also writes `debug/<provider-id>.models.csv`, which lists every model ID and whether it was found in `/v1/models`, `/v2/model/info`, or the merged provider configuration. The `config` column describes configured models, not the plugin's runtime-discovered inventory. Its `config_name_only` column is true when the configuration entry contains only a `name`. These files can include API keys, model metadata, and other secrets; do not commit or share them.
+
+For the compiled runtime view, the debug script separately queries `opencode api get /api/provider/<provider-id>` and `opencode api get /api/model`. It combines the resolved provider settings and that provider's models into `debug/<provider-id>.opencode-runtime.json` and adds a `runtime` column to the CSV. This preserves the distinction between configured overrides (`config`) and models currently available after runtime transforms (`runtime`). V2's model API returns a snapshot that may precede initial plugin discovery settlement; rerun the script after discovery completes if expected models are missing. Runtime output can also contain secrets and must not be committed or shared.
 
 ## Model Names
 
