@@ -40,6 +40,10 @@ export function normalizeBaseURL(baseURL: string): string {
   return baseURL.replace(/\/+$/, "").replace(/\/v1$/, "");
 }
 
+export function discoveryTimeout(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 export function isLiteLLMModel(value: unknown): value is LiteLLMModel {
   return (
     typeof value === "object" &&

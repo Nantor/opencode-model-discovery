@@ -1,3 +1,20 @@
+import type { Model } from "@opencode/plugin";
+import type { DeepMutable } from "@opencode/plugin/promise/types";
+import type { ModelCost, Modalities } from "@opencode-ai/models";
+
+export type {
+  ModelMetadata as ModelsDevModel,
+  ModelMetadataMap as ModelsDevData,
+} from "@opencode-ai/models";
+
+/** A discovery draft, before OpenCode defaults are applied. */
+export type DiscoveredModelInfo = Omit<{
+  -readonly [Key in keyof Model.Info]?: Model.Info[Key];
+}, "capabilities" | "limit"> & {
+  capabilities?: Partial<Model.Info["capabilities"]>;
+  limit?: Partial<Model.Info["limit"]>;
+};
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -153,49 +170,22 @@ export interface LiteLLMModelsResponse {
   data: LiteLLMModel[];
 }
 
-export interface OpenCodeModelCost {
-  input: number;
-  output: number;
-  cache_read?: number;
-  cache_write?: number;
-  context_over_200k?: {
-    input: number;
-    output: number;
-    cache_read?: number;
-    cache_write?: number;
-  };
-}
-
-export interface OpenCodeModelLimit {
-  context: number;
-  output: number;
-  input?: number;
-}
-
-export interface OpenCodeModelModalities {
-  input: Array<"text" | "audio" | "image" | "video" | "pdf">;
-  output: Array<"text" | "audio" | "image" | "video" | "pdf">;
-}
+export type OpenCodeModelCost = ModelCost;
+export type OpenCodeModelLimit = DeepMutable<Model.Info["limit"]>;
+export type OpenCodeModelModalities = Modalities;
 
 export interface OpenCodeModelEntry {
   id?: string;
   name?: string;
   family?: string;
-  release_date?: string;
   attachment?: boolean;
   reasoning?: boolean;
-  temperature?: boolean;
   tool_call?: boolean;
   interleaved?: boolean | { field: "reasoning_content" | "reasoning_details" };
   cost?: OpenCodeModelCost;
   limit?: OpenCodeModelLimit;
   modalities?: OpenCodeModelModalities;
-  experimental?: boolean;
-  status?: "alpha" | "beta" | "deprecated" | "active";
-  provider?: { npm?: string; api?: string };
   options?: Record<string, unknown>;
-  headers?: Record<string, string>;
-  variants?: Record<string, { disabled?: boolean }>;
 }
 
 export interface OpenCodeDiscoveryOptions {
@@ -226,58 +216,3 @@ export interface OpenCodeConfig {
   provider?: Record<string, OpenCodeProvider | undefined>;
   [key: string]: unknown;
 }
-
-// ---------------------------------------------------------------------------
-// models.dev
-// ---------------------------------------------------------------------------
-
-export interface ModelsDevCost {
-  input?: number;
-  output?: number;
-  cache_read?: number;
-  cache_write?: number;
-  [key: string]: unknown;
-}
-
-export interface ModelsDevLimit {
-  context?: number;
-  output?: number;
-  input?: number;
-}
-
-export interface ModelsDevModalities {
-  input?: Array<"text" | "audio" | "image" | "video" | "pdf">;
-  output?: Array<"text" | "audio" | "image" | "video" | "pdf">;
-}
-
-export interface ModelsDevModel {
-  id: string;
-  canonical_model_id?: string;
-  name?: string;
-  family?: string;
-  attachment?: boolean;
-  reasoning?: boolean;
-  tool_call?: boolean;
-  temperature?: boolean;
-  knowledge?: string;
-  release_date?: string;
-  last_updated?: string;
-  open_weights?: boolean;
-  limit?: ModelsDevLimit;
-  cost?: ModelsDevCost;
-  modalities?: ModelsDevModalities;
-  [key: string]: unknown;
-}
-
-export interface ModelsDevProvider {
-  id: string;
-  name?: string;
-  npm?: string;
-  api?: string;
-  env?: string[];
-  doc?: string;
-  models: Record<string, ModelsDevModel>;
-}
-
-/** OpenCode's local catalog groups model metadata by provider ID. */
-export type ModelsDevData = Record<string, ModelsDevProvider>;

@@ -1,16 +1,15 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { models as snapshotModels } from "@opencode-ai/models/snapshot";
 
 import {
-  enhanceModelEntry,
+  enhanceModelInfo,
   findModelsDevEntry,
   getModelsDevData,
 } from "./models-dev.js";
-import type { ModelsDevData, ModelsDevModel, OpenCodeModelEntry } from "./types.js";
+import type { DiscoveredModelInfo, ModelsDevData, ModelsDevModel } from "./types.js";
+import { Model } from "@opencode/plugin";
 
-const sampleModels: Record<string, ModelsDevModel> = {
+const sampleModels: Record<string, ModelsDevModel> = Object.fromEntries(Object.entries({
   "gpt-4o": {
     id: "gpt-4o",
     name: "GPT-4o",
@@ -21,7 +20,6 @@ const sampleModels: Record<string, ModelsDevModel> = {
     temperature: true,
     release_date: "2024-05-13",
     limit: { context: 128000, output: 16384 },
-    cost: { input: 2.5, output: 10, cache_read: 1.25 },
     modalities: { input: ["text", "image"], output: ["text"] },
   },
   unique: {
@@ -35,7 +33,6 @@ const sampleModels: Record<string, ModelsDevModel> = {
     reasoning: true,
     tool_call: true,
     limit: { context: 200000, output: 64000 },
-    cost: { input: 5, output: 25 },
   },
   "azure/gpt-4o": {
     id: "azure/gpt-4o",
@@ -62,15 +59,15 @@ const sampleModels: Record<string, ModelsDevModel> = {
     modalities: { input: ["text", "image", "video"], output: ["text"] },
     limit: { context: 256000, output: 128000 },
   },
-};
+} satisfies Record<string, Omit<ModelsDevModel, "description">>).map(([id, model]) => [id, { ...model, description: "Test model" }]));
 
 const sampleData: ModelsDevData = {
-  gateway: { id: "gateway", models: sampleModels },
-  other: { id: "other", models: { "gpt-4o": { id: "gpt-4o", name: "Duplicate model" } } },
+  ...sampleModels,
+  duplicate: { id: "gpt-4o", name: "Duplicate model", description: "Test model" },
 };
 
 describe("findModelsDevEntry", () => {
-  it("removes configured prefixes and postfixes before searching all providers", () => {
+  it("removes configured prefixes and postfixes before searching canonical models", () => {
     const options = { modelsDevIgnorePrefixes: ["EU-"], modelsDevIgnorePostfixes: ["-private"] };
     expect(findModelsDevEntry(sampleData, "EU-gpt-4o-private", options))
       .toBe(sampleModels["gpt-4o"]);
@@ -79,8 +76,8 @@ describe("findModelsDevEntry", () => {
   });
 
   it("cleans affixes even when the original ID exists in the catalog", () => {
-    const cleaned = { id: "unique", name: "Cleaned route" };
-    const data = { custom: { id: "custom", models: { unique: cleaned, "EU-unique": { id: "EU-unique" } } } };
+    const cleaned = { id: "unique", name: "Cleaned route", description: "Test model" };
+    const data = { unique: cleaned, "EU-unique": { id: "EU-unique", name: "Test", description: "Test model" } };
     expect(findModelsDevEntry(data, "EU-unique", { modelsDevIgnorePrefixes: ["EU-"] }))
       .toBe(cleaned);
   });
@@ -118,8 +115,8 @@ describe("findModelsDevEntry", () => {
   });
 
   it("matches a catalog model ID ending with the cleaned ID", () => {
-    const model = { id: "vendor/group/unique", name: "Namespaced model" };
-    const data = { unrelated: { id: "unrelated", models: { "different-key": model } } };
+    const model = { id: "vendor/group/unique", name: "Namespaced model", description: "Test model" };
+    const data = { "different-key": model };
     expect(findModelsDevEntry(data, "unique")).toBe(model);
     expect(findModelsDevEntry(data, "EU-unique-private", {
       modelsDevIgnorePrefixes: ["EU-"],
@@ -139,8 +136,8 @@ describe("findModelsDevEntry", () => {
   });
 
   it("uses catalog order without preferring exact matches over suffix matches", () => {
-    const first = { id: "vendor/unique" };
-    const data = { custom: { id: "custom", models: { "vendor/unique": first, unique: { id: "unique" } } } };
+    const first = { id: "vendor/unique", name: "Test", description: "Test model" };
+    const data = { "vendor/unique": first, unique: { id: "unique", name: "Test", description: "Test model" } };
     expect(findModelsDevEntry(data, "unique")).toBe(first);
   });
 
@@ -160,99 +157,115 @@ describe("findModelsDevEntry", () => {
   });
 });
 
-describe("enhanceModelEntry", () => {
+describe("enhanceModelInfo", () => {
   it("fills undefined fields from the models.dev entry", () => {
-    const modelEntry: OpenCodeModelEntry = { name: "Gpt 4o" };
-    enhanceModelEntry(modelEntry, sampleModels["gpt-4o"]);
+    const modelEntry: DiscoveredModelInfo = { name: "Gpt 4o" };
+    enhanceModelInfo(modelEntry, sampleModels["gpt-4o"]);
 
     expect(modelEntry.family).toBe("gpt");
-    expect(modelEntry.release_date).toBe("2024-05-13");
-    expect(modelEntry.temperature).toBe(true);
-    expect(modelEntry.attachment).toBe(true);
-    expect(modelEntry.reasoning).toBe(false);
-    expect(modelEntry.tool_call).toBe(true);
+    expect(modelEntry).not.toHaveProperty("release_date");
+    expect(modelEntry).not.toHaveProperty("temperature");
+    expect(modelEntry).not.toHaveProperty("attachment");
+    expect(modelEntry.compatibility).toBeUndefined();
+    expect(modelEntry.capabilities?.tools).toBe(true);
     expect(modelEntry.limit).toEqual({ context: 128000, output: 16384 });
     expect(modelEntry.cost).toBeUndefined();
-    expect(modelEntry.modalities).toEqual({ input: ["text", "image"], output: ["text"] });
+    expect(modelEntry.capabilities).toEqual({ tools: true, input: ["text", "image"], output: ["text"] });
   });
 
   it("never overwrites fields already populated from discovery", () => {
-    const modelEntry: OpenCodeModelEntry = {
+    const modelEntry: DiscoveredModelInfo = {
       name: "Gpt 4o",
-      family: "custom-family",
-      reasoning: true,
-      cost: { input: 1, output: 1 },
+      family: Model.Family.make("custom-family"),
+      compatibility: { reasoningField: "reasoning_text" },
+      cost: [],
       limit: { context: 1, output: 1 },
-      modalities: { input: ["text"], output: ["text"] },
+      capabilities: { tools: false, input: ["text"], output: ["text"] },
     };
-    enhanceModelEntry(modelEntry, sampleModels["gpt-4o"]);
+    enhanceModelInfo(modelEntry, sampleModels["gpt-4o"]);
 
     expect(modelEntry.family).toBe("custom-family");
-    expect(modelEntry.reasoning).toBe(true);
-    expect(modelEntry.cost).toEqual({ input: 1, output: 1 });
+    expect(modelEntry.compatibility).toEqual({ reasoningField: "reasoning_text" });
+    expect(modelEntry.cost).toEqual([]);
     expect(modelEntry.limit).toEqual({ context: 1, output: 1 });
-    expect(modelEntry.modalities).toEqual({ input: ["text"], output: ["text"] });
+    expect(modelEntry.capabilities).toEqual({ tools: false, input: ["text"], output: ["text"] });
   });
 
   it("never fills missing pricing from the catalog", () => {
-    const modelEntry: OpenCodeModelEntry = { name: "Test" };
-    enhanceModelEntry(modelEntry, {
-      id: "test",
-      cost: { input: 2.5, output: 10, cache_read: 1.25, cache_write: 3 },
-    });
+    const modelEntry: DiscoveredModelInfo = { name: "Test" };
+    enhanceModelInfo(modelEntry, sampleModels["gpt-4o"]);
     expect(modelEntry.cost).toBeUndefined();
   });
 
-  it("does not set limit when the models.dev entry lacks required subfields", () => {
-    const modelEntry: OpenCodeModelEntry = { name: "Test" };
-    enhanceModelEntry(modelEntry, {
-      id: "test",
-      limit: { context: 1000 },
-      cost: { input: 1 },
+  it("fills a missing input limit without replacing discovered limits", () => {
+    const modelEntry: DiscoveredModelInfo = { limit: { context: 128000, output: 16384 } };
+    enhanceModelInfo(modelEntry, {
+      name: "GPT-4o", description: "Test model",
+      id: "openai/gpt-4o",
+      limit: { context: 256000, input: 120000, output: 32000 },
     });
+    expect(modelEntry.limit).toEqual({ context: 128000, input: 120000, output: 16384 });
+    enhanceModelInfo(modelEntry, { id: "openai/gpt-4o", name: "GPT-4o", description: "Test model", limit: { context: 128000, input: 100000 } });
+    expect(modelEntry.limit?.input).toBe(120000);
+  });
 
-    expect(modelEntry.limit).toBeUndefined();
-    expect(modelEntry.cost).toBeUndefined();
+  it("supports canonical metadata without an output limit", () => {
+    const modelEntry: DiscoveredModelInfo = {};
+    enhanceModelInfo(modelEntry, {
+      name: "GPT-4o", description: "Test model",
+      id: "openai/gpt-4o",
+      family: "gpt",
+      limit: { context: 128000 },
+    });
+    expect(modelEntry.family).toBe("gpt");
+    expect(modelEntry.limit).toEqual({ context: 128000 });
+  });
+
+  it("fills reasoning compatibility while preserving other compatibility settings", () => {
+    const modelEntry: DiscoveredModelInfo = { compatibility: { maxTokensField: "max_completion_tokens" } };
+    enhanceModelInfo(modelEntry, sampleModels["bytedance-seed/seed-2.0-pro"]);
+    expect(modelEntry.compatibility).toEqual({ maxTokensField: "max_completion_tokens", reasoningField: "reasoning_content" });
   });
 
   it("ignores non-boolean/non-string metadata types", () => {
-    const modelEntry: OpenCodeModelEntry = { name: "Test" };
-    enhanceModelEntry(modelEntry, {
+    const modelEntry: DiscoveredModelInfo = { name: "Test" };
+    enhanceModelInfo(modelEntry, {
+      name: "Test", description: "Test model",
       id: "test",
-      family: 123 as unknown as string,
+      family: 123 as unknown as ModelsDevModel["family"],
       reasoning: "yes" as unknown as boolean,
     });
 
     expect(modelEntry.family).toBeUndefined();
-    expect(modelEntry.reasoning).toBeUndefined();
+    expect(modelEntry.compatibility).toBeUndefined();
   });
 });
 
 describe("getModelsDevData", () => {
-  let cacheHome: string | undefined;
-
-  afterEach(() => {
-    if (cacheHome === undefined) delete process.env.XDG_CACHE_HOME;
-    else process.env.XDG_CACHE_HOME = cacheHome;
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
   });
 
-  it("reads OpenCode's local models catalog", async () => {
-    const directory = join(tmpdir(), `opencode-models-${process.pid}-${Date.now()}`);
-    cacheHome = process.env.XDG_CACHE_HOME;
-    process.env.XDG_CACHE_HOME = directory;
-    await mkdir(join(directory, "opencode"), { recursive: true });
-    await writeFile(join(directory, "opencode", "models.json"), JSON.stringify(sampleData));
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches the canonical catalog directly from models.dev with a timeout", async () => {
+    vi.mocked(fetch).mockImplementation(async () => Response.json(sampleData));
 
     await expect(getModelsDevData()).resolves.toEqual(sampleData);
+    expect(fetch).toHaveBeenCalledWith(new URL("https://models.dev/models.json"), expect.objectContaining({
+      method: "GET",
+      signal: expect.any(AbortSignal),
+    }));
     const data = await getModelsDevData();
     expect(data).toBeDefined();
-    if (!data) throw new Error("Expected a provider-grouped models catalog");
+    if (!data) throw new Error("Expected a canonical models catalog");
     const match = findModelsDevEntry(data, "EU-seed-2.0-pro-private", {
       modelsDevIgnorePrefixes: ["EU-"],
       modelsDevIgnorePostfixes: ["-private"],
     });
     expect(match).toEqual(sampleModels["bytedance-seed/seed-2.0-pro"]);
-    await rm(directory, { recursive: true, force: true });
   });
 
   it.each([
@@ -262,28 +275,30 @@ describe("getModelsDevData", () => {
     { model: [] },
     { model: {} },
     { model: { id: 123 } },
-    { "gpt-4o": { id: "gpt-4o", name: "Flat model" } },
+    { openai: { id: "openai", models: {} } },
     { openai: { id: "openai", models: [] } },
     { openai: { id: "openai", models: { "gpt-4o": { id: 123 } } } },
-  ])("rejects invalid or flat catalogs: %j", async (catalog) => {
-    const directory = join(tmpdir(), `opencode-invalid-models-${process.pid}-${Date.now()}`);
-    cacheHome = process.env.XDG_CACHE_HOME;
-    process.env.XDG_CACHE_HOME = directory;
-    await mkdir(join(directory, "opencode"), { recursive: true });
-    try {
-      await writeFile(join(directory, "opencode", "models.json"), JSON.stringify(catalog));
-      await expect(getModelsDevData()).resolves.toBeUndefined();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+  ])("falls back to the snapshot for invalid or provider-grouped catalogs: %j", async (catalog) => {
+    vi.mocked(fetch).mockResolvedValue(Response.json(catalog));
+    await expect(getModelsDevData()).resolves.toBe(snapshotModels);
   });
 
-  it("logs a warning when OpenCode's local catalog is unavailable", async () => {
-    cacheHome = process.env.XDG_CACHE_HOME;
-    process.env.XDG_CACHE_HOME = join(tmpdir(), `missing-opencode-models-${Date.now()}`);
+  it("logs a warning when models.dev is unavailable", async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error("Network unavailable"));
     const log = vi.fn();
 
-    await expect(getModelsDevData(log)).resolves.toBeUndefined();
-    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("Could not read OpenCode models catalog"));
+    await expect(getModelsDevData(log)).resolves.toBe(snapshotModels);
+    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("falling back to bundled snapshot"));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles HTTP errors without failing discovery", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response("Unavailable", { status: 503 }));
+    await expect(getModelsDevData()).resolves.toBe(snapshotModels);
+  });
+
+  it("handles malformed JSON without failing discovery", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response("{ invalid json"));
+    await expect(getModelsDevData()).resolves.toBe(snapshotModels);
   });
 });

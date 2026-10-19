@@ -1,4 +1,4 @@
-import { Model, Provider } from "@opencode/plugin";
+import type { Model, Provider } from "@opencode/plugin";
 import type { Context } from "@opencode/plugin/promise/plugin";
 
 import {
@@ -10,16 +10,19 @@ import {
   writeCache,
 } from "./cache.js";
 import {
+  discoveryTimeout,
   fetchModelInfo,
   fetchModels,
   isLiteLLMModel,
   isLiteLLMModelInfoEntry,
 } from "./fetch.js";
-import { enhanceModelEntry, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
+import { enhanceModelInfo, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
+import { applyModelInfoDraft, materializeModelInfo, modelInfoDraft } from "./model.js";
 import { buildProviderConfig } from "./provider.js";
 import { errorMessage, safeLog } from "./utils.js";
 import type {
   LiteLLMModelInfoEntry,
+  DiscoveredModelInfo,
   Logger,
   OpenCodeConfig,
   OpenCodeModelEntry,
@@ -31,6 +34,7 @@ type RequestBodyTransform = (
 ) => Record<string, unknown>;
 
 const MAX_COMPLETION_TOKENS = Symbol("maxCompletionTokens");
+const runtimeDrafts = new WeakMap<OpenCodeModelEntry, DiscoveredModelInfo>();
 
 // LiteLLM `/models` and `model_info.mode` values that can never serve /chat/completions.
 // `chat`, `completion` and `responses` are deliberately absent: LiteLLM
@@ -198,12 +202,7 @@ export async function discoverProviderModels(
       ? pluginOptions.discoveryBaseURL
       : options.baseURL;
 
-  const timeoutMs =
-    typeof pluginOptions.discoveryTimeout === "number" &&
-    Number.isFinite(pluginOptions.discoveryTimeout) &&
-    pluginOptions.discoveryTimeout >= 0
-      ? pluginOptions.discoveryTimeout
-      : undefined;
+  const timeoutMs = discoveryTimeout(pluginOptions.discoveryTimeout);
 
   try {
     const cacheDurationMs = parseCacheDuration(pluginOptions.discoveryCache);
@@ -261,6 +260,18 @@ export async function discoverProviderModels(
       false,
     );
 
+    for (const entry of discoveredEntries) {
+      const model = discovered.models?.[entry.model_name];
+      if (!model) continue;
+      const draft = modelInfoDraft(model);
+      const info = entry.model_info;
+      // Preserve explicit negative capabilities; catalog data must not override them.
+      if (info.supports_function_calling === false && info.supports_tool_choice !== true) {
+        draft.capabilities = { ...draft.capabilities, tools: false };
+      }
+      runtimeDrafts.set(model, draft);
+    }
+
     if (pluginOptions.enhanceFromModelsDev === true) {
       const modelsDevData = await getModelsDevData(log);
       if (modelsDevData) {
@@ -273,7 +284,10 @@ export async function discoverProviderModels(
             pluginOptions,
           );
           if (modelsDevEntry) {
-            enhanceModelEntry(modelEntry, modelsDevEntry);
+            const draft = runtimeDrafts.get(modelEntry) ?? modelInfoDraft(modelEntry);
+            enhanceModelInfo(draft, modelsDevEntry,
+              typeof entry.model_info.supports_reasoning === "boolean" || typeof entry.model_info.reasoning === "boolean");
+            applyModelInfoDraft(modelEntry, draft);
           }
         }
       }
@@ -381,11 +395,7 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
   });
 };
 
-function providerFromV2(info: {
-  id: string;
-  name: string;
-  settings?: Record<string, unknown>;
-}): OpenCodeProvider {
+function providerFromV2(info: Pick<Provider.Info, "id" | "name" | "settings">): OpenCodeProvider {
   return {
     name: info.name,
     options: info.settings as OpenCodeProvider["options"],
@@ -397,46 +407,10 @@ function modelsToV2(
   models: Record<string, OpenCodeModelEntry>,
 ): Array<Model.Info> {
   return Object.entries(models).map(([id, entry]) => {
-    const model: {
-      id: string;
-      modelID: string;
-      providerID: string;
-      name: string;
-      family?: string;
-      capabilities: { tools: boolean; input: string[]; output: string[] };
-      variants: Model.Info["variants"];
-      time: Model.Info["time"];
-      cost: Array<{ input: number; output: number; cache: { read: number; write: number } }>;
-      status: Model.Info["status"];
-      enabled: boolean;
-      limit: { context: number; input?: number; output: number };
-      compatibility?: { reasoningField?: string; maxTokensField?: "max_completion_tokens" };
-    } = Model.Info.default(
-      Provider.ID.make(providerID),
-      Model.ID.make(id),
-    ) as unknown as typeof model;
-    model.name = entry.name ?? id;
-    if (entry.family !== undefined) model.family = entry.family as Model.Info["family"];
-    if (entry.limit) model.limit = entry.limit;
-    if (entry.cost) {
-      model.cost = [{
-        input: entry.cost.input,
-        output: entry.cost.output,
-        cache: { read: entry.cost.cache_read ?? 0, write: entry.cost.cache_write ?? 0 },
-      }];
-    }
-    if (entry.tool_call !== undefined) model.capabilities.tools = entry.tool_call;
-    if (entry.modalities) model.capabilities = {
-      ...model.capabilities,
-      input: entry.modalities.input,
-      output: entry.modalities.output,
-    };
-    if (entry.reasoning === true) {
-      model.compatibility = { ...model.compatibility, reasoningField: "reasoning_content" };
-    }
+    const model = { ...(runtimeDrafts.get(entry) ?? modelInfoDraft(entry)) };
     if ((entry as Record<PropertyKey, unknown>)[MAX_COMPLETION_TOKENS] === true) {
       model.compatibility = { ...model.compatibility, maxTokensField: "max_completion_tokens" };
     }
-    return model as unknown as Model.Info;
+    return materializeModelInfo(providerID, id, model);
   });
 }

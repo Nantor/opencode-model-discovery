@@ -1,7 +1,3 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import type { Context } from "@opencode/plugin/promise/plugin";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -634,31 +630,21 @@ describe("applyDiscovery", () => {
     ["EU-gpt-4o-private", "unknown-provider"],
     ["EU-gpt-4o-private", undefined],
   ])("enhances discovered %s with models.dev data regardless of provider %s", async (modelID, litellmProvider) => {
-    // The plugin reads OpenCode's local models.dev catalog snapshot rather
-    // than fetching models.dev at runtime.
-    const cacheDirectory = join(tmpdir(), `opencode-models-${process.pid}-${Date.now()}`);
-    process.env.XDG_CACHE_HOME = cacheDirectory;
     const catalog: ModelsDevData = {
-      unrelated: {
-        id: "unrelated",
-        models: {
-          "vendor/gpt-4o": {
-            id: "vendor/gpt-4o",
-            name: "GPT-4o",
-            family: "gpt",
-            release_date: "2024-05-13",
-            temperature: true,
-            cost: { input: 2.5, output: 10, cache_read: 1.25, cache_write: 3 },
-            modalities: { input: ["text", "image"], output: ["text"] },
-          },
-        },
+      "vendor/gpt-4o": {
+        id: "vendor/gpt-4o",
+        name: "GPT-4o",
+        description: "Test model",
+        family: "gpt",
+        release_date: "2024-05-13",
+        temperature: true,
+        modalities: { input: ["text", "image"], output: ["text"] },
       },
     };
-    await mkdir(join(cacheDirectory, "opencode"), { recursive: true });
-    await writeFile(join(cacheDirectory, "opencode", "models.json"), JSON.stringify(catalog));
 
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = input.toString();
+      if (url === "https://models.dev/models.json") return Response.json(catalog);
       return {
         ok: true,
         json: async () =>
@@ -702,14 +688,14 @@ describe("applyDiscovery", () => {
     expect(Object.keys(providerFor(config, "gateway").models ?? {})).toEqual([modelID]);
     expect(providerFor(config, "gateway").options?.["opencode-model-discovery"]).toBeUndefined();
     expect(model?.family).toBe("gpt");
-    expect(model?.release_date).toBe("2024-05-13");
-    expect(model?.temperature).toBe(true);
+    expect(model).not.toHaveProperty("release_date");
+    expect(model).not.toHaveProperty("temperature");
     expect(model?.cost).toBeUndefined();
     // LiteLLM-derived limit must remain untouched by the enhancement pass.
     expect(model?.limit).toEqual({ context: 128000, output: 16384 });
 
-    delete process.env.XDG_CACHE_HOME;
-    await rm(cacheDirectory, { recursive: true, force: true });
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => url.toString() === "https://models.dev/models.json"))
+      .toBe(true);
   });
 
   it("does not fetch models.dev when enhanceFromModelsDev is not set", async () => {
@@ -736,16 +722,10 @@ describe("applyDiscovery", () => {
     }
   });
 
-  it("continues discovery when models.dev enhancement fails", async () => {
-    // A corrupt/invalid local catalog makes the enhancement pass fail, but
-    // discovery itself must still complete normally.
-    const cacheDirectory = join(tmpdir(), `opencode-models-${process.pid}-${Date.now()}`);
-    process.env.XDG_CACHE_HOME = cacheDirectory;
-    await mkdir(join(cacheDirectory, "opencode"), { recursive: true });
-    await writeFile(join(cacheDirectory, "opencode", "models.json"), "{ not valid json");
-
+  it("enhances discovery from the bundled snapshot when models.dev is unavailable", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = input.toString();
+      if (url === "https://models.dev/models.json") throw new Error("Network unavailable");
       return {
         ok: true,
         json: async () =>
@@ -769,9 +749,9 @@ describe("applyDiscovery", () => {
     await applyDiscovery(config);
 
     expect(providerFor(config, "gateway").models?.["gpt-4o"]?.name).toBe("Gpt 4o");
+    expect(providerFor(config, "gateway").models?.["gpt-4o"]?.family).toBe("gpt");
+    expect(providerFor(config, "gateway").models?.["gpt-4o"]?.cost).toBeUndefined();
 
-    delete process.env.XDG_CACHE_HOME;
-    await rm(cacheDirectory, { recursive: true, force: true });
   });
 
   it("preserves a wildcard id from /v1/models", async () => {
@@ -808,15 +788,27 @@ describe("applyDiscovery", () => {
 });
 
 describe("ModelDiscoveryPlugin", () => {
-  it("uses ctx.storage for caching during discovery", async () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("uses ctx.storage and enriches typed runtime models before applying defaults", async () => {
     const storage = createMemoryStorage();
-    const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => ({
+    const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://models.dev/models.json") {
+        return Response.json({ "lab/model-a": {
+          id: "lab/model-a", name: "Model A", description: "Test model",
+          family: "gpt", tool_call: false, reasoning: true,
+          limit: { context: 1000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        } });
+      }
+      return ({
       ok: true,
       json: async () =>
         input.toString().includes("/models")
           ? { data: [{ id: "model-a" }] }
           : { data: [{ model_name: "model-a", litellm_params: {}, model_info: {} }] },
-    }) as Response);
+      }) as Response;
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     let providerTransformCb: Parameters<Context["provider"]["transform"]>[0] | undefined;
@@ -832,6 +824,7 @@ describe("ModelDiscoveryPlugin", () => {
           "opencode-model-discovery": {
             discovery: true,
             discoveryCache: "PT1H",
+            enhanceFromModelsDev: true,
           },
         },
       },
@@ -887,6 +880,13 @@ describe("ModelDiscoveryPlugin", () => {
     // Replay model transform after reload
     modelTransformCb?.(modelEditor);
     expect(updatedModels.has("model-a")).toBe(true);
+    expect(updatedModels.get("model-a")).toMatchObject({
+      family: "gpt",
+      capabilities: { tools: false, input: ["text", "image"], output: ["text"] },
+      limit: { context: 1000 },
+      compatibility: { reasoningField: "reasoning_content" },
+      cost: [],
+    });
 
     // Check that ctx.storage was populated with cache entries
     const cachedEntries = await storage.scan({ prefix: "discovery:" });

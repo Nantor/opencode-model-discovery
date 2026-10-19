@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
 import type { OpenCodeDiscoveryOptions } from "../src/types.js";
+import { discoveryTimeout, normalizeBaseURL } from "../src/fetch.ts";
 
 interface ProviderSettings {
   baseURL?: string;
@@ -26,10 +27,6 @@ interface DebugConfig {
 
 const execFileAsync = promisify(execFile);
 const resultsDirectory = resolve("debug");
-
-function normalizeBaseURL(baseURL: string): string {
-  return baseURL.replace(/\/+$/, "").replace(/\/v1$/, "");
-}
 
 function mergeRecords(
   target: Record<string, unknown>,
@@ -175,7 +172,7 @@ export function modelSummaryCSV(
 
 export function providerSettings(providerID: string, config: DebugConfig): ProviderSettings {
   const provider = selectedProviderConfig(config, providerID).providers![providerID];
-  if (!provider.settings?.baseURL) {
+  if (typeof provider.settings?.baseURL !== "string" || !provider.settings.baseURL) {
     throw new Error(`Provider "${providerID}" has no settings.baseURL`);
   }
   return provider.settings;
@@ -190,14 +187,35 @@ async function fetchRaw(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  const response = await fetch(`${normalizeBaseURL(baseURL)}${path}`, {
-    headers,
-    signal: AbortSignal.timeout(timeoutMs ?? 10_000),
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} ${response.statusText} from ${response.url}`);
+  const url = `${normalizeBaseURL(baseURL)}${path}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs ?? 10_000);
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText} from ${url}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
   }
-  return response.json();
+}
+
+/** Preserve raw data and represent optional endpoint failures explicitly, not as an empty inventory. */
+export async function fetchDiscoveryResponses(
+  baseURL: string,
+  apiKey?: string,
+  timeout?: unknown,
+): Promise<{ models: unknown; modelInfo: unknown; modelInfoError?: string }> {
+  const timeoutMs = discoveryTimeout(timeout);
+  const [models, modelInfo] = await Promise.allSettled([
+    fetchRaw(baseURL, "/v1/models?return_wildcard_routes=true", apiKey, timeoutMs),
+    fetchRaw(baseURL, "/v2/model/info?return_wildcard_routes=true", apiKey, timeoutMs),
+  ]);
+  if (models.status === "rejected") throw models.reason;
+  if (modelInfo.status === "fulfilled") return { models: models.value, modelInfo: modelInfo.value };
+  const error = modelInfo.reason instanceof Error ? modelInfo.reason.message : String(modelInfo.reason);
+  return { models: models.value, modelInfo: { error }, modelInfoError: error };
 }
 
 async function main(): Promise<void> {
@@ -211,9 +229,6 @@ async function main(): Promise<void> {
   const baseURL = typeof discoveryOptions?.discoveryBaseURL === "string"
     ? discoveryOptions.discoveryBaseURL
     : options.baseURL!;
-  const timeoutMs = typeof discoveryOptions?.discoveryTimeout === "number"
-    ? discoveryOptions.discoveryTimeout
-    : undefined;
 
   console.log(`Provider: ${providerID}`);
   console.log(`Config: ${paths.join(", ")}`);
@@ -222,10 +237,10 @@ async function main(): Promise<void> {
   await mkdir(resultsDirectory, { recursive: true });
   const prefix = join(resultsDirectory, providerID.replaceAll(/[^a-zA-Z0-9._-]/g, "_"));
 
-  const [models, modelInfo] = await Promise.all([
-    fetchRaw(baseURL, "/v1/models?return_wildcard_routes=true", options.apiKey, timeoutMs),
-    fetchRaw(baseURL, "/v2/model/info?return_wildcard_routes=true", options.apiKey, timeoutMs),
-  ]);
+  const { models, modelInfo, modelInfoError } = await fetchDiscoveryResponses(
+    baseURL, options.apiKey, discoveryOptions?.discoveryTimeout,
+  );
+  if (modelInfoError) console.warn(`Detailed model info unavailable: ${modelInfoError}`);
   const modelsPath = `${prefix}.models.json`;
   const modelInfoPath = `${prefix}.model-info.json`;
   await Promise.all([
@@ -234,19 +249,23 @@ async function main(): Promise<void> {
   ]);
 
   const resolvedConfig = selectedProviderConfig(config, providerID);
-  const [providerOutput, modelsOutput] = await Promise.all([
-    apiGet(`/api/provider/${encodeURIComponent(providerID)}`),
-    apiGet("/api/model"),
-  ]);
-  const runtimeConfig = runtimeProviderConfig(providerOutput, modelsOutput, providerID);
   const configOutputPath = `${prefix}.opencode-config.json`;
   const runtimeOutputPath = `${prefix}.opencode-runtime.json`;
   const summaryPath = `${prefix}.models.csv`;
-  await Promise.all([
-    writeJSON(configOutputPath, resolvedConfig),
-    writeJSON(runtimeOutputPath, runtimeConfig),
-    writeFile(summaryPath, modelSummaryCSV(models, modelInfo, resolvedConfig, providerID, runtimeConfig)),
-  ]);
+  await writeJSON(configOutputPath, resolvedConfig);
+  let runtimeConfig: DebugConfig | undefined;
+  try {
+    const [providerOutput, modelsOutput] = await Promise.all([
+      apiGet(`/api/provider/${encodeURIComponent(providerID)}`),
+      apiGet("/api/model"),
+    ]);
+    runtimeConfig = runtimeProviderConfig(providerOutput, modelsOutput, providerID);
+    await writeJSON(runtimeOutputPath, runtimeConfig);
+  } catch (error) {
+    console.warn(`Runtime inventory unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    await writeJSON(runtimeOutputPath, { error: "Runtime inventory unavailable" });
+  }
+  await writeFile(summaryPath, modelSummaryCSV(models, modelInfo, resolvedConfig, providerID, runtimeConfig));
 
   console.log("Wrote discovery results:");
   console.log(`  ${modelsPath}`);
@@ -254,6 +273,7 @@ async function main(): Promise<void> {
   console.log(`  ${configOutputPath}`);
   console.log(`  ${runtimeOutputPath}`);
   console.log(`  ${summaryPath}`);
+  if (modelInfoError) console.log("CSV model_info=false indicates unavailable detailed info, not confirmed absence.");
   console.log("Runtime models are a current snapshot; initial plugin discovery may still be pending. Rerun after discovery completes if models are missing.");
 }
 

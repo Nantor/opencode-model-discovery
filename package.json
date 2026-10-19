@@ -22,8 +22,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
-    "test": "vitest src",
-    "test:run": "vitest run src",
+    "test": "vitest src scripts",
+    "test:run": "vitest run src scripts",
     "debug:provider": "node scripts/debug-provider.ts",
     "deploy:local": "npm run build && cp dist/*.js ~/.config/opencode/plugins/ && opencode service restart",
     "prepublishOnly": "npm run lint && npm run test:run && npm run build"
@@ -38,5 +38,8 @@
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.59.4",
     "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@opencode-ai/models": "^0.0.106"
   }
 }

@@ -1,13 +1,11 @@
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { Models } from "@opencode-ai/models";
+import { Model } from "@opencode/plugin";
 
 import type {
   Logger,
   ModelsDevData,
   ModelsDevModel,
-  ModelsDevProvider,
-  OpenCodeModelEntry,
+  DiscoveredModelInfo,
   OpenCodeDiscoveryOptions,
 } from "./types.js";
 import { errorMessage, safeLog } from "./utils.js";
@@ -16,53 +14,44 @@ import { errorMessage, safeLog } from "./utils.js";
 // models.dev enhancement
 // ---------------------------------------------------------------------------
 //
-// Fills gaps in discovered model metadata (family, release date,
+// Fills gaps in discovered model metadata (family,
 // limits, modalities, ...) using the public models.dev catalog. LiteLLM
 // discovery data always wins; models.dev is only used to fill fields that
 // LiteLLM's /v2/model/info did not report. Pricing is never copied from the catalog.
 
-function modelsDevCachePath(): string {
-  return join(
-    process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"),
-    "opencode",
-    "models.json",
-  );
-}
-
 function isModelsDevData(value: unknown): value is ModelsDevData {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   return Object.values(value).every(
-    (provider) => {
-      if (typeof provider !== "object" || provider === null || Array.isArray(provider)) return false;
-      const { id, models } = provider as Partial<ModelsDevProvider>;
-      if (typeof id !== "string" || typeof models !== "object" || models === null || Array.isArray(models)) {
-        return false;
-      }
-      return Object.values(models).every(
-        (model) => typeof model === "object" && model !== null && !Array.isArray(model) &&
-          typeof model.id === "string",
-      );
-    },
+    (model) => typeof model === "object" && model !== null && !Array.isArray(model) &&
+      typeof (model as Partial<ModelsDevModel>).id === "string" && !("models" in model),
   );
 }
 
 /**
- * Read OpenCode's local models.dev catalog. OpenCode maintains this richer
- * snapshot at ~/.cache/opencode/models.json, including canonical model IDs.
+ * Fetch provider-independent metadata directly from models.dev/models.json.
+ * Enhancement is optional: catalog failures never prevent provider discovery.
  */
 export async function getModelsDevData(
   log?: Logger,
 ): Promise<ModelsDevData | undefined> {
-  const path = modelsDevCachePath();
   try {
-    const data = JSON.parse(await readFile(path, "utf8")) as unknown;
-    return isModelsDevData(data) ? data : undefined;
+    const data: unknown = await Models.make().models({ signal: AbortSignal.timeout(10_000) });
+    if (!isModelsDevData(data)) throw new Error("Unexpected models.dev catalog format");
+    return data;
   } catch (error) {
     await safeLog(
       log,
       "warn",
-      `Could not read OpenCode models catalog at ${path}: ${errorMessage(error)}`,
+      `Could not fetch models.dev catalog; falling back to bundled snapshot: ${errorMessage(error)}`,
     );
+  }
+
+  try {
+    const { models } = await import("@opencode-ai/models/snapshot");
+    if (!isModelsDevData(models)) throw new Error("Unexpected models.dev snapshot format");
+    return models;
+  } catch (error) {
+    await safeLog(log, "warn", `Could not load models.dev snapshot: ${errorMessage(error)}`);
     return undefined;
   }
 }
@@ -74,7 +63,7 @@ function ignoredAffixes(value: unknown): string[] {
     .sort((left, right) => right.length - left.length);
 }
 
-/** Find the first catalog model whose ID ends with the affix-cleaned ID, regardless of provider. */
+/** Find the first canonical catalog model whose ID ends with the affix-cleaned ID. */
 export function findModelsDevEntry(
   data: ModelsDevData,
   resolvedID: string,
@@ -89,56 +78,39 @@ export function findModelsDevEntry(
   if (postfix) id = id.slice(0, -postfix.length);
   if (!id) return undefined;
 
-  for (const provider of Object.values(data)) {
-    const match = Object.values(provider.models).find((model) => model.id.endsWith(id));
-    if (match) return match;
-  }
-  return undefined;
+  return Object.values(data).find((model) => model.id.endsWith(id));
 }
 
 /**
- * Fill gaps in a discovered model entry using models.dev metadata. Fields
+ * Fill gaps in a Model.Info-shaped discovery draft using models.dev metadata. Fields
  * already populated from LiteLLM discovery are left untouched; only fields
  * that are still `undefined` are set. Pricing is never read from the catalog.
+ * reasoningReported prevents catalog inference when LiteLLM explicitly reports false.
  */
-export function enhanceModelEntry(
-  modelEntry: OpenCodeModelEntry,
+export function enhanceModelInfo(
+  modelEntry: DiscoveredModelInfo,
   modelsDevEntry: ModelsDevModel,
+  reasoningReported = false,
 ): void {
   if (modelEntry.family === undefined && typeof modelsDevEntry.family === "string") {
-    modelEntry.family = modelsDevEntry.family;
+    modelEntry.family = Model.Family.make(modelsDevEntry.family);
   }
-  if (modelEntry.release_date === undefined && typeof modelsDevEntry.release_date === "string") {
-    modelEntry.release_date = modelsDevEntry.release_date;
+  if (!reasoningReported && modelEntry.compatibility?.reasoningField === undefined && modelsDevEntry.reasoning === true) {
+    modelEntry.compatibility = { ...modelEntry.compatibility, reasoningField: "reasoning_content" };
   }
-  if (modelEntry.temperature === undefined && typeof modelsDevEntry.temperature === "boolean") {
-    modelEntry.temperature = modelsDevEntry.temperature;
+  if (modelEntry.capabilities?.tools === undefined && typeof modelsDevEntry.tool_call === "boolean") {
+    modelEntry.capabilities = { ...modelEntry.capabilities, tools: modelsDevEntry.tool_call };
   }
-  if (modelEntry.attachment === undefined && typeof modelsDevEntry.attachment === "boolean") {
-    modelEntry.attachment = modelsDevEntry.attachment;
-  }
-  if (modelEntry.reasoning === undefined && typeof modelsDevEntry.reasoning === "boolean") {
-    modelEntry.reasoning = modelsDevEntry.reasoning;
-  }
-  if (modelEntry.tool_call === undefined && typeof modelsDevEntry.tool_call === "boolean") {
-    modelEntry.tool_call = modelsDevEntry.tool_call;
-  }
-
-  if (modelEntry.limit === undefined && modelsDevEntry.limit) {
-    const { context, output, input } = modelsDevEntry.limit;
-    if (typeof context === "number" && typeof output === "number") {
-      modelEntry.limit = {
-        context,
-        output,
-        ...(typeof input === "number" ? { input } : {}),
-      };
+  for (const field of ["context", "input", "output"] as const) {
+    const value = modelsDevEntry.limit?.[field];
+    if (modelEntry.limit?.[field] === undefined && typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      modelEntry.limit = { ...modelEntry.limit, [field]: value };
     }
   }
-
-  if (modelEntry.modalities === undefined && modelsDevEntry.modalities) {
-    const { input, output } = modelsDevEntry.modalities;
-    if (Array.isArray(input) && Array.isArray(output)) {
-      modelEntry.modalities = { input, output };
+  for (const field of ["input", "output"] as const) {
+    const value = modelsDevEntry.modalities?.[field];
+    if (modelEntry.capabilities?.[field] === undefined && Array.isArray(value)) {
+      modelEntry.capabilities = { ...modelEntry.capabilities, [field]: [...value] };
     }
   }
 }
