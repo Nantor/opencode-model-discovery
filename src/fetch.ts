@@ -9,13 +9,26 @@ import type {
 // Fetch
 // ---------------------------------------------------------------------------
 
+/**
+ * Strip trailing "/" characters from a base URL without a regex.
+ * `baseURL` is uncontrolled config data, so avoid regexes that could be
+ * susceptible to ReDoS (see CWE-1333).
+ */
+function trimTrailingSlashes(baseURL: string): string {
+  let end = baseURL.length;
+  while (end > 0 && baseURL.charCodeAt(end - 1) === 0x2f /* "/" */) {
+    end -= 1;
+  }
+  return baseURL.slice(0, end);
+}
+
 async function fetchEndpoint<T>(
   baseURL: string,
   path: string,
   apiKey?: string,
   timeoutMs = 10_000,
 ): Promise<T> {
-  const url = `${baseURL.replace(/\/+$/, "")}${path}`;
+  const url = `${trimTrailingSlashes(baseURL)}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -37,7 +50,8 @@ async function fetchEndpoint<T>(
 }
 
 export function normalizeBaseURL(baseURL: string): string {
-  return baseURL.replace(/\/+$/, "").replace(/\/v1$/, "");
+  const trimmed = trimTrailingSlashes(baseURL);
+  return trimmed.endsWith("/v1") ? trimmed.slice(0, -3) : trimmed;
 }
 
 export function discoveryTimeout(value: unknown): number | undefined {
