@@ -175,4 +175,41 @@ describe("OpenCode V2 provider debugging", () => {
       "",
     ].join("\n"));
   });
+
+  it("includes a models_dev column matching model IDs without provider and configured affixes", () => {
+    const catalog = {
+      "openai/gpt-4o": { id: "openai/gpt-4o", name: "GPT-4o", description: "Test model" },
+      "google/gemma-3-27b-it": { id: "google/gemma-3-27b-it", name: "Gemma", description: "Test model" },
+    };
+    const csv = modelSummaryCSV(
+      { data: [{ id: "EU-gpt-4o-private" }, { id: "vertex/gemma-3-27b-it" }, { id: "missing" }] },
+      {
+        data: [
+          { model_name: "vertex/gemma-3-27b-it", litellm_params: { model: "vertex_ai/different-upstream-id" } },
+        ],
+      },
+      {
+        providers: {
+          proxy: {
+            settings: {
+              "opencode-model-discovery": {
+                modelsDevIgnorePrefixes: ["EU-"],
+                modelsDevIgnorePostfixes: ["-private"],
+              },
+            },
+          },
+        },
+      },
+      "proxy",
+      undefined,
+      catalog,
+    );
+    expect(csv).toBe([
+      "model,models,model_info,config,config_name_only,models_dev",
+      '"EU-gpt-4o-private",true,false,false,false,true',
+      '"missing",true,false,false,false,false',
+      '"vertex/gemma-3-27b-it",true,true,false,false,true',
+      "",
+    ].join("\n"));
+  });
 });

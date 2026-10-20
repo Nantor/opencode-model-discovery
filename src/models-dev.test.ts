@@ -114,39 +114,40 @@ describe("findModelsDevEntry", () => {
       .toBe(sampleModels["anthropic/claude-opus-4-5@20251101"]);
   });
 
-  it("matches a catalog model ID ending with the cleaned ID", () => {
+  it("matches the provider-stripped catalog model ID", () => {
     const model = { id: "vendor/group/unique", name: "Namespaced model", description: "Test model" };
     const data = { "different-key": model };
     expect(findModelsDevEntry(data, "unique")).toBe(model);
-    expect(findModelsDevEntry(data, "EU-unique-private", {
+    expect(findModelsDevEntry(data, "other-provider/unique")).toBe(model);
+    expect(findModelsDevEntry(data, "other-provider/EU-unique-private", {
       modelsDevIgnorePrefixes: ["EU-"],
       modelsDevIgnorePostfixes: ["-private"],
     })).toBe(model);
   });
 
-  it("uses literal case-sensitive endsWith matching, not substring or reverse matching", () => {
-    expect(findModelsDevEntry(sampleData, "4o")).toBe(sampleModels["gpt-4o"]);
-    for (const id of ["GPT-4o", "gpt-4", "openai/gpt-4o", "devstral-2-123b"]) {
+  it("uses exact case-sensitive matching after stripping provider prefixes, not substring matching", () => {
+    expect(findModelsDevEntry(sampleData, "openai/gpt-4o")).toBe(sampleModels["gpt-4o"]);
+    for (const id of ["4o", "GPT-4o", "gpt-4", "devstral-2-123b"]) {
       expect(findModelsDevEntry(sampleData, id)).toBeUndefined();
     }
   });
 
-  it("uses the first matching entry in catalog order when IDs share a suffix", () => {
+  it("uses the first matching entry in catalog order when provider-stripped IDs match", () => {
     expect(findModelsDevEntry(sampleData, "gpt-4o")).toBe(sampleModels["gpt-4o"]);
   });
 
-  it("uses catalog order without preferring exact matches over suffix matches", () => {
+  it("uses catalog order when multiple entries share the same model ID without provider", () => {
     const first = { id: "vendor/unique", name: "Test", description: "Test model" };
     const data = { "vendor/unique": first, unique: { id: "unique", name: "Test", description: "Test model" } };
     expect(findModelsDevEntry(data, "unique")).toBe(first);
   });
 
-  it("only removes provider paths and regional prefixes when configured", () => {
+  it("strips provider paths automatically and removes regional prefixes when configured", () => {
     expect(findModelsDevEntry(sampleData, "US-unique")).toBeUndefined();
     expect(findModelsDevEntry(sampleData, "US-unique", { modelsDevIgnorePrefixes: ["US-"] }))
       .toBe(sampleModels.unique);
     expect(findModelsDevEntry(sampleData, "openai/EU-gpt-4o-private", {
-      modelsDevIgnorePrefixes: ["openai/EU-"],
+      modelsDevIgnorePrefixes: ["EU-"],
       modelsDevIgnorePostfixes: ["-private"],
     })).toBe(sampleModels["gpt-4o"]);
   });

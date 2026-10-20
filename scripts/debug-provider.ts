@@ -4,8 +4,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
-import type { OpenCodeDiscoveryOptions } from "../src/types.js";
+import type { ModelsDevData, OpenCodeDiscoveryOptions } from "../src/types.js";
 import { discoveryTimeout, normalizeBaseURL } from "../src/fetch.ts";
+import { findModelsDevEntry, getModelsDevData } from "../src/models-dev.ts";
 
 interface ProviderSettings {
   baseURL?: string;
@@ -146,9 +147,11 @@ export function modelSummaryCSV(
   config: DebugConfig,
   providerID: string,
   runtimeConfig?: DebugConfig,
+  modelsDevData?: ModelsDevData,
 ): string {
   const fromModels = modelIDs(models, "id");
   const fromModelInfo = modelIDs(modelInfo, "model_name");
+  const discoveryOptions = config.providers?.[providerID]?.settings?.["opencode-model-discovery"];
   const configModelEntries = config.providers?.[providerID]?.models ?? {};
   const configModels = new Set(Object.keys(configModelEntries));
   const runtimeModels = new Set(Object.keys(runtimeConfig?.providers?.[providerID]?.models ?? {}));
@@ -165,8 +168,13 @@ export function modelSummaryCSV(
           typeof configModelEntries[modelID]?.name === "string",
       ),
       ...(runtimeConfig ? [String(runtimeModels.has(modelID))] : []),
+      ...(modelsDevData
+        ? [String(findModelsDevEntry(modelsDevData, modelID, discoveryOptions) !== undefined)]
+        : []),
     ].join(","));
-  const header = "model,models,model_info,config,config_name_only" + (runtimeConfig ? ",runtime" : "");
+  const header = "model,models,model_info,config,config_name_only" +
+    (runtimeConfig ? ",runtime" : "") +
+    (modelsDevData ? ",models_dev" : "");
   return [header, ...rows].join("\n") + "\n";
 }
 
@@ -265,7 +273,11 @@ async function main(): Promise<void> {
     console.warn(`Runtime inventory unavailable: ${error instanceof Error ? error.message : String(error)}`);
     await writeJSON(runtimeOutputPath, { error: "Runtime inventory unavailable" });
   }
-  await writeFile(summaryPath, modelSummaryCSV(models, modelInfo, resolvedConfig, providerID, runtimeConfig));
+  const modelsDevData = await getModelsDevData((level, message) => console[level](message));
+  await writeFile(
+    summaryPath,
+    modelSummaryCSV(models, modelInfo, resolvedConfig, providerID, runtimeConfig, modelsDevData),
+  );
 
   console.log("Wrote discovery results:");
   console.log(`  ${modelsPath}`);

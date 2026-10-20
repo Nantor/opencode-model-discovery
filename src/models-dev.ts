@@ -8,7 +8,7 @@ import type {
   DiscoveredModelInfo,
   OpenCodeDiscoveryOptions,
 } from "./types.js";
-import { errorMessage, safeLog } from "./utils.js";
+import { errorMessage, safeLog } from "./utils.ts";
 
 // ---------------------------------------------------------------------------
 // models.dev enhancement
@@ -63,22 +63,27 @@ function ignoredAffixes(value: unknown): string[] {
     .sort((left, right) => right.length - left.length);
 }
 
-/** Find the first canonical catalog model whose ID ends with the affix-cleaned ID. */
+function withoutProvider(id: string): string {
+  const slashIndex = id.lastIndexOf("/");
+  return slashIndex >= 0 ? id.slice(slashIndex + 1) : id;
+}
+
+/** Find the first canonical catalog model whose provider-stripped ID matches the affix-cleaned model ID. */
 export function findModelsDevEntry(
   data: ModelsDevData,
-  resolvedID: string,
+  modelID: string,
   options?: Pick<OpenCodeDiscoveryOptions, "modelsDevIgnorePrefixes" | "modelsDevIgnorePostfixes">,
 ): ModelsDevModel | undefined {
   const prefixes = ignoredAffixes(options?.modelsDevIgnorePrefixes);
   const postfixes = ignoredAffixes(options?.modelsDevIgnorePostfixes);
-  let id = resolvedID;
+  let id = withoutProvider(modelID);
   const prefix = prefixes.find((value) => id.startsWith(value));
   if (prefix) id = id.slice(prefix.length);
   const postfix = postfixes.find((value) => id.endsWith(value));
   if (postfix) id = id.slice(0, -postfix.length);
   if (!id) return undefined;
 
-  return Object.values(data).find((model) => model.id.endsWith(id));
+  return Object.values(data).find((model) => withoutProvider(model.id) === id);
 }
 
 /**

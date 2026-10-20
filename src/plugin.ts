@@ -280,7 +280,7 @@ export async function discoverProviderModels(
           if (!modelEntry) continue;
           const modelsDevEntry = findModelsDevEntry(
             modelsDevData,
-            entry.litellm_params.model ?? entry.model_name,
+            entry.model_name,
             pluginOptions,
           );
           if (modelsDevEntry) {
