@@ -6,6 +6,7 @@ import {
   findModelsDevEntry,
   getModelsDevData,
 } from "./models-dev.js";
+import { loadModelsDevSnapshot } from "./models-dev-snapshot.js";
 import type { DiscoveredModelInfo, ModelsDevData, ModelsDevModel } from "./types.js";
 import { Model } from "@opencode/plugin";
 
@@ -301,5 +302,11 @@ describe("getModelsDevData", () => {
   it("handles malformed JSON without failing discovery", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response("{ invalid json"));
     await expect(getModelsDevData()).resolves.toBe(snapshotModels);
+  });
+});
+
+describe("loadModelsDevSnapshot", () => {
+  it("returns the bundled snapshot catalog", async () => {
+    await expect(loadModelsDevSnapshot()).resolves.toBe(snapshotModels);
   });
 });

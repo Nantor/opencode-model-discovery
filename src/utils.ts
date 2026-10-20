@@ -1,8 +1,21 @@
-import type { Logger } from "./types.js";
+import type { Logger, ModelsDevData, ModelsDevModel } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Type guard for the flat models.dev catalog shape: an object whose values are
+ * non-array model objects (each with a string `id` and no nested `models`
+ * property). Returns false for provider-grouped or malformed catalogs.
+ */
+export function isModelsDevData(value: unknown): value is ModelsDevData {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every(
+    (model) => typeof model === "object" && model !== null && !Array.isArray(model) &&
+      typeof (model as Partial<ModelsDevModel>).id === "string" && !("models" in model),
+  );
+}
 
 /**
  * Format an unknown thrown value into a human-readable message string.

@@ -86,7 +86,7 @@ LiteLLM's `/v2/model/info` does not always report every field OpenCode understan
 }
 ```
 
-The remote catalog is a flat map of provider-independent metadata keyed by canonical model ID (for example, `openai/gpt-4o`). Each discovered model is matched using its defined model ID with any provider prefix stripped (and configured `modelsDevIgnorePrefixes` / `modelsDevIgnorePostfixes` removed) against the provider-stripped catalog model ID (`gpt-4o`). Matching is exact and case-sensitive, and ignores LiteLLM provider metadata. If several entries match, the first in catalog order wins. LiteLLM-derived fields always take precedence — catalog data only fills in non-pricing fields that discovery left `undefined`, including a missing `limit.input`. Costs remain sourced from LiteLLM discovery or explicit model configuration, never from `models.json`. Requests time out after 10 seconds; if the catalog is unavailable or invalid, the plugin logs a warning and falls back to the bundled `@opencode-ai/models/snapshot` canonical models. The snapshot reflects the installed package version and requires no network request. If the snapshot also cannot be loaded, discovery continues without enhancement.
+The remote catalog is a flat map of provider-independent metadata keyed by canonical model ID (for example, `openai/gpt-4o`). Each discovered model is matched using its defined model ID with any provider prefix stripped (and configured `modelsDevIgnorePrefixes` / `modelsDevIgnorePostfixes` removed) against the provider-stripped catalog model ID (`gpt-4o`). Matching is exact and case-sensitive, and ignores LiteLLM provider metadata. If several entries match, the first in catalog order wins. LiteLLM-derived fields always take precedence — catalog data only fills in non-pricing fields that discovery left `undefined`, including a missing `limit.input`. Costs remain sourced from LiteLLM discovery or explicit model configuration, never from `models.json`. Requests time out after 10 seconds; if the catalog is unavailable or invalid, the plugin logs a warning and falls back to the bundled `@opencode-ai/models/snapshot` canonical models (the fallback build). The snapshot reflects the installed package version and requires no network request. If the snapshot also cannot be loaded, or the plugin was built as the slim variant (which omits the bundled snapshot to keep the bundle small), discovery continues without enhancement.
 
 Models with endpoint-only modes such as `mode: "image_generation"` in `/models` or `/v2/model/info` are excluded from discovery. The `/models` exclusion also applies when detailed model info is unavailable or reports a different mode.
 
@@ -127,6 +127,24 @@ Model IDs are normalized into display names. For example, `openai/gpt-4o-mini` b
 `discovery`, `discoveryBaseURL`, `discoveryTimeout`, `discoveryCache`, `enhanceFromModelsDev`, `modelsDevIgnorePrefixes`, and `modelsDevIgnorePostfixes` are consumed by the plugin (nested under the `opencode-model-discovery` settings key) and are not passed to the underlying provider runtime.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
+
+## Build Variants
+
+`npm run build` emits two self-contained bundles into `dist/`:
+
+- `opencode-model-discovery.js` — the **fallback** build. It bundles the `@opencode-ai/models/snapshot` canonical catalog (~6.7 MB) used when the live `models.dev` fetch is unavailable. `main`/`exports` point here, so this is the default published variant and is backwards compatible.
+- `opencode-model-discovery-slim.js` — the **slim** build (~0.8 MB). It omits the bundled snapshot; when the live `models.dev` catalog cannot be fetched, the plugin logs a warning and continues discovery without enhancement.
+
+Both files ship in the published package (`files` includes `dist`). To build a single variant instead of both, use `npm run build:fallback` or `npm run build:slim`.
+
+The variant is selected at build time by the esbuild `--define` flag `BUILD_SNAPSHOT` (`true` for fallback, `false` for slim); the code between the two is identical apart from that single compile-time toggle.
+
+`npm run deploy:local` installs the built plugin into the local OpenCode plugins directory and restarts the service. It deploys the **slim** variant by default; pass `--variant=fallback` to deploy the fallback build instead:
+
+```bash
+npm run deploy:local                 # slim (default)
+npm run deploy:local -- --variant=fallback
+```
 
 ## License
 

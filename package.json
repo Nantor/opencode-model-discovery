@@ -1,6 +1,6 @@
 {
   "name": "opencode-model-discovery",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "OpenCode plugin that discovers models from OpenAI-compatible LiteLlm providers",
   "license": "MIT",
   "type": "module",
@@ -18,14 +18,16 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "rimraf dist && tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/opencode-model-discovery.js",
+    "build": "rimraf dist && tsc --noEmit && node scripts/build.mjs",
+    "build:fallback": "rimraf dist && tsc --noEmit && node scripts/build.mjs --variant=fallback",
+    "build:slim": "rimraf dist && tsc --noEmit && node scripts/build.mjs --variant=slim",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test": "vitest src scripts",
     "test:run": "vitest run src scripts",
     "debug:provider": "node scripts/debug-provider.ts",
-    "deploy:local": "npm run build && cp dist/*.js ~/.config/opencode/plugins/ && opencode service restart",
+    "deploy:local": "node scripts/deploy-local.mjs",
     "prepublishOnly": "npm run lint && npm run test:run && npm run build"
   },
   "devDependencies": {

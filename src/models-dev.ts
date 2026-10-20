@@ -1,6 +1,7 @@
 import { Models } from "@opencode-ai/models";
 import { Model } from "@opencode/plugin";
 
+import { loadModelsDevSnapshot } from "./models-dev-snapshot.js";
 import type {
   Logger,
   ModelsDevData,
@@ -8,7 +9,7 @@ import type {
   DiscoveredModelInfo,
   OpenCodeDiscoveryOptions,
 } from "./types.js";
-import { errorMessage, safeLog } from "./utils.ts";
+import { errorMessage, isModelsDevData, safeLog } from "./utils.ts";
 
 // ---------------------------------------------------------------------------
 // models.dev enhancement
@@ -19,17 +20,21 @@ import { errorMessage, safeLog } from "./utils.ts";
 // discovery data always wins; models.dev is only used to fill fields that
 // LiteLLM's /v2/model/info did not report. Pricing is never copied from the catalog.
 
-function isModelsDevData(value: unknown): value is ModelsDevData {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  return Object.values(value).every(
-    (model) => typeof model === "object" && model !== null && !Array.isArray(model) &&
-      typeof (model as Partial<ModelsDevModel>).id === "string" && !("models" in model),
-  );
-}
+/**
+ * Whether the buffered `@opencode-ai/models/snapshot` fallback should be
+ * bundled. `BUILD_SNAPSHOT` is a compile-time flag injected by esbuild
+ * (`--define`) and vitest (`define`): `true` for the fallback build and
+ * tests, `false` for the slim build. A bare identifier reference lets both
+ * bundler and test runner substitute the literal, so the slim build prunes
+ * the dead branch (and its inlined snapshot) while tests keep the fallback.
+ */
+declare const BUILD_SNAPSHOT: boolean;
 
 /**
  * Fetch provider-independent metadata directly from models.dev/models.json.
  * Enhancement is optional: catalog failures never prevent provider discovery.
+ * When the network catalog is unavailable, the bundled snapshot is used as a
+ * fallback in the fallback build; in the slim build this returns `undefined`.
  */
 export async function getModelsDevData(
   log?: Logger,
@@ -46,14 +51,11 @@ export async function getModelsDevData(
     );
   }
 
-  try {
-    const { models } = await import("@opencode-ai/models/snapshot");
-    if (!isModelsDevData(models)) throw new Error("Unexpected models.dev snapshot format");
-    return models;
-  } catch (error) {
-    await safeLog(log, "warn", `Could not load models.dev snapshot: ${errorMessage(error)}`);
-    return undefined;
+  if (BUILD_SNAPSHOT) {
+    return loadModelsDevSnapshot(log);
   }
+  await safeLog(log, "warn", "Could not fetch models.dev catalog; slim build has no bundled snapshot to fall back to");
+  return undefined;
 }
 
 function ignoredAffixes(value: unknown): string[] {
