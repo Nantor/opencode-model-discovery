@@ -231,6 +231,67 @@ describe("readCache / writeCache with storage", () => {
 });
 
 describe("createMemoryStorage", () => {
+  it.each([1, 2, 3, 6, 10])("traverses every matching entry exactly once with limit %i", async (limit) => {
+    const storage = createMemoryStorage();
+    for (const key of ["k:a", "other:1", "k:2", "k:á", "k:10", "other:2", "k:Z", "k:1"]) {
+      await storage.set(key, { id: key });
+    }
+    const expected = ["k:1", "k:10", "k:2", "k:Z", "k:a", "k:á"];
+    const seen: string[] = [];
+    let after: string | undefined;
+    // Bound the loop so a repeated/non-advancing cursor fails rather than hangs.
+    for (let count = 0; count <= expected.length; count++) {
+      const page = await storage.scan({ prefix: "k:", after, limit });
+      expect(page.entries).toEqual(expected.slice(seen.length, seen.length + limit)
+        .map((key) => ({ key, value: { id: key } })));
+      seen.push(...page.entries.map(({ key }) => key));
+      if (seen.length === expected.length) {
+        expect(page.next).toBeUndefined();
+        break;
+      }
+      expect(page.next).toBe(seen[seen.length - 1]);
+      after = page.next;
+    }
+    expect(seen).toEqual(expected);
+  });
+
+  it("applies an exclusive key cursor before limiting and can resume after cursor deletion", async () => {
+    const storage = createMemoryStorage();
+    for (const key of ["k:3", "k:1", "k:2"]) await storage.set(key, key);
+    const options = { prefix: "k:", after: "k:1", limit: 1 };
+    const expected = { entries: [{ key: "k:2", value: "k:2" }], next: "k:2" };
+    await expect(storage.scan(options)).resolves.toEqual(expected);
+    await storage.remove("k:1");
+    await expect(storage.scan(options)).resolves.toEqual(expected);
+    await expect(storage.scan({ ...options, after: "k:15" })).resolves.toEqual(expected);
+    await expect(storage.scan({ ...options, after: "j:" })).resolves.toEqual(expected);
+    await expect(storage.scan({ ...options, after: "k:3" })).resolves.toEqual({ entries: [] });
+    await expect(storage.scan({ ...options, after: "z:" })).resolves.toEqual({ entries: [] });
+  });
+
+  it("returns all sorted matches without a limit and treats an empty prefix/cursor literally", async () => {
+    const storage = createMemoryStorage();
+    await expect(storage.scan({ prefix: "", limit: 1 })).resolves.toEqual({ entries: [] });
+    for (const key of ["b", "", "a"]) await storage.set(key, key);
+    await expect(storage.scan({ prefix: "" })).resolves.toEqual({
+      entries: [{ key: "", value: "" }, { key: "a", value: "a" }, { key: "b", value: "b" }],
+    });
+    await expect(storage.scan({ prefix: "", limit: 1 })).resolves.toEqual({
+      entries: [{ key: "", value: "" }], next: "",
+    });
+    await expect(storage.scan({ prefix: "", after: "" })).resolves.toEqual({
+      entries: [{ key: "a", value: "a" }, { key: "b", value: "b" }],
+    });
+    await expect(storage.scan({ prefix: "missing", limit: 1 })).resolves.toEqual({ entries: [] });
+  });
+
+  it.each([0, -1, 0.5, 1.5, NaN, Infinity, -Infinity])("rejects invalid page limit %s", async (limit) => {
+    const storage = createMemoryStorage();
+    await expect(storage.scan({ prefix: "", limit })).rejects.toThrow(RangeError);
+    await storage.set("key", "value");
+    await expect(storage.scan({ prefix: "", limit })).rejects.toThrow(RangeError);
+  });
+
   it("supports get, set, remove, and scan operations", async () => {
     const storage = createMemoryStorage();
     await storage.set("cache:1", "one" as never);

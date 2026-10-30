@@ -148,14 +148,21 @@ export function createMemoryStorage(): Storage {
     async remove(key: string) {
       store.delete(key);
     },
-    async scan(options: { prefix: string; after?: string; limit?: number }) {
-      const entries: Array<{ key: string; value: never }> = [];
-      for (const [key, value] of store.entries()) {
-        if (key.startsWith(options.prefix)) {
-          entries.push({ key, value: value as never });
-        }
+    async scan({ prefix, after, limit }) {
+      // StorageScanOptions leaves numeric boundaries unspecified. Require a
+      // positive finite integer when supplied so every paginated scan advances;
+      // an omitted limit returns all matches, without a continuation cursor.
+      if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+        throw new RangeError("Storage scan limit must be a positive finite integer");
       }
-      return { entries };
+      // Use the same locale-independent string order for sorting and the
+      // exclusive cursor, even when the cursor key is absent from the store.
+      const keys = [...store.keys()]
+        .filter((key) => key.startsWith(prefix) && (after === undefined || key > after))
+        .sort();
+      const page = limit === undefined ? keys : keys.slice(0, limit);
+      const entries = page.map((key) => ({ key, value: store.get(key) as never }));
+      return keys.length > page.length ? { entries, next: page[page.length - 1] } : { entries };
     },
   };
 }
