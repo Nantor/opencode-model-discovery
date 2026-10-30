@@ -3,6 +3,8 @@ import type { Provider } from "@opencode/plugin";
 import type { Context } from "@opencode/plugin/promise/plugin";
 
 import {
+  cacheModel,
+  cacheModelInfo,
   discoveryCacheKey,
   isArrayOf,
   parseCacheDuration,
@@ -61,6 +63,7 @@ async function readOrFetchCache<T>(
   cacheDurationMs: number | undefined,
   fetch: () => Promise<T[]>,
   isItem: (value: unknown) => value is T,
+  project: (value: T) => T,
   allowPartialCache = false,
   signal?: AbortSignal,
 ): Promise<T[]> {
@@ -71,10 +74,10 @@ async function readOrFetchCache<T>(
     : isArrayOf(isItem);
   const cached = await readCache(storage, key, cacheDurationMs, isCachedValue);
   signal?.throwIfAborted();
-  if (cached !== undefined) return cached.filter(isItem);
+  if (cached !== undefined) return cached.filter(isItem).map(project);
   const fresh = await fetch();
   signal?.throwIfAborted();
-  await writeCache(storage, key, fresh);
+  await writeCache(storage, key, fresh.map(project));
   return fresh;
 }
 
@@ -231,6 +234,7 @@ export async function discoverProviderModels(
       cacheDurationMs,
       () => fetchModels(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal, headers),
       isLiteLLMModel,
+      cacheModel,
       false,
       lifecycle?.signal,
     );
@@ -242,7 +246,8 @@ export async function discoverProviderModels(
         cacheDurationMs,
         () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal, headers),
         isLiteLLMModelInfoEntry,
-        // Older caches can contain malformed entries. Keep usable metadata even
+        cacheModelInfo,
+        // Caches can contain malformed entries. Keep usable metadata even
         // when refetching the optional endpoint would fail.
         true,
         lifecycle?.signal,

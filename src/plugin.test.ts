@@ -155,6 +155,84 @@ describe("applyDiscovery", () => {
     expect(JSON.stringify(await storage.scan({ prefix: "discovery:" }))).not.toContain("header-secret");
   });
 
+  it("persists only discovery metadata and hashes connection secrets across cache hits", async () => {
+    const storage = createMemoryStorage();
+    const baseURL = "https://synthetic-user:synthetic-password@gateway/v1?token=synthetic-query";
+    const extras = {
+      api_key: "synthetic-response-api-key", headers: { Authorization: "synthetic-response-header" },
+      nested: { password: "synthetic-nested-password" },
+    };
+    vi.mocked(fetch).mockImplementation(async (input) => Response.json({ data: input.toString().includes("/models")
+      ? [{ id: "alias", ...extras }, { id: "embedding", mode: "embedding", ...extras }]
+      : [{
+        model_name: "public-route", ...extras,
+        litellm_params: { model: "alias", merge_reasoning_content_in_choices: true, ...extras },
+        model_info: {
+          ...extras, key: "synthetic-metadata-key", mode: "chat",
+          max_input_tokens: "200000", max_output_tokens: "4096",
+          input_cost_per_token: "0", output_cost_per_token: "0.000002",
+          cache_read_input_token_cost: "0.000003", cache_creation_input_token_cost: "0.000004",
+          input_cost_per_token_above_200k_tokens: "0.000005", output_cost_per_token_above_200k_tokens: "0.000006",
+          cache_read_input_token_cost_above_200k_tokens: "0.000007", cache_creation_input_token_cost_above_200k_tokens: "0.000008",
+          supports_reasoning: true, supports_function_calling: true, supports_vision: false,
+          supports_audio_input: true, supports_audio_output: true, supports_pdf_input: true,
+          supported_openai_params: ["max_completion_tokens", "synthetic-param-secret"],
+        },
+      }] }));
+    const discover = async (discoveryCache?: string): Promise<OpenCodeProvider> => {
+      const config: OpenCodeConfig = { provider: { gateway: {
+        headers: { "X-API-Key": "synthetic-header-key", "X-Tenant": "synthetic-tenant" },
+        options: { baseURL, apiKey: "synthetic-bearer-key", "opencode-model-discovery": { discovery: true, discoveryCache } },
+      } } };
+      await applyDiscovery(config, undefined, storage);
+      return providerFor(config, "gateway");
+    };
+    const uncached = await discover();
+    const fresh = await discover("PT1H");
+    vi.mocked(fetch).mockRejectedValue(new Error("cache hit must not fetch"));
+    const cached = await discover("PT1H");
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(cached.models).toEqual(uncached.models);
+    expect(cached.models).toEqual(fresh.models);
+    expect(Object.keys(cached.models!)).toEqual(["public-route"]);
+    expect(cached.models!["public-route"]).toMatchObject({
+      limit: { context: 200000, input: 200000, output: 4096 },
+      cost: { input: 0, output: 2, cache_read: 3, cache_write: 4,
+        context_over_200k: { input: 5, output: 6, cache_read: 7, cache_write: 8 } },
+      reasoning: true, tool_call: true, attachment: false, interleaved: { field: "reasoning_content" },
+      modalities: { input: ["text", "audio", "pdf"], output: ["text", "audio"] },
+    });
+    for (const provider of [uncached, fresh, cached]) {
+      const transform = provider.options?.transformRequestBody as (body: Record<string, unknown>) => Record<string, unknown>;
+      expect(transform({ model: "public-route", max_tokens: 100 })).toEqual({ model: "public-route", max_completion_tokens: 100 });
+    }
+    const entries = await storage.scan({ prefix: "discovery:" });
+    expect(entries.entries).toHaveLength(2);
+    expect(JSON.stringify(entries)).not.toContain("synthetic-");
+    for (const { key } of entries.entries) expect(key).toMatch(/^discovery:v2:/);
+  });
+
+  it("invalidates legacy raw-response caches without reading or migrating their contents", async () => {
+    const storage = createMemoryStorage();
+    const baseURL = "https://legacy.example.com/v1";
+    const legacyKey = `discovery:models:${baseURL}:old-auth-hash`;
+    await writeCache(storage, legacyKey, [{ id: "old-model", api_key: "synthetic-legacy-secret" }]);
+    const get = vi.spyOn(storage, "get");
+    vi.mocked(fetch).mockImplementation(async (input) => Response.json({
+      data: input.toString().includes("/models") ? [{ id: "new-model" }] : [],
+    }));
+    const config: OpenCodeConfig = { provider: { gateway: {
+      options: { baseURL, "opencode-model-discovery": { discovery: true, discoveryCache: "PT1H" } },
+    } } };
+    await applyDiscovery(config, undefined, storage);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(Object.keys(providerFor(config, "gateway").models!)).toEqual(["new-model"]);
+    expect(get).not.toHaveBeenCalledWith(legacyKey);
+    expect(JSON.stringify(await storage.scan({ prefix: "discovery:v2:" }))).not.toContain("synthetic-legacy-secret");
+    // Namespace invalidation intentionally leaves old storage for separate removal.
+    expect(await storage.get(legacyKey)).toBeDefined();
+  });
+
   it("de-duplicates model ids repeated by /v1/models", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,

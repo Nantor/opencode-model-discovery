@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  cacheModel,
+  cacheModelInfo,
   createMemoryStorage,
   discoveryCacheKey,
   isArrayOf,
@@ -28,15 +30,28 @@ describe("parseCacheDuration", () => {
 });
 
 describe("discoveryCacheKey", () => {
-  it("creates prefixed cache keys with hashed api keys", () => {
+  it("creates versioned cache keys with hashed endpoint and api keys", () => {
     const key1 = discoveryCacheKey("models", "https://api.example.com", "secret-key");
     const key2 = discoveryCacheKey("models", "https://api.example.com", "secret-key");
     const keyNoAuth = discoveryCacheKey("models", "https://api.example.com");
 
     expect(key1).toBe(key2);
-    expect(key1).toContain("discovery:models:https://api.example.com:");
+    expect(key1).toMatch(/^discovery:v2:models:[a-f0-9]{64}:[a-f0-9]{64}$/);
+    expect(key1).not.toContain("https://api.example.com");
     expect(key1).not.toContain("secret-key");
     expect(keyNoAuth).not.toBe(key1);
+  });
+
+  it("hashes URL userinfo and query credentials while retaining endpoint isolation", () => {
+    const baseURL = "https://synthetic-user:synthetic-password@gateway/v1?token=synthetic-query";
+    const original = discoveryCacheKey("models", baseURL);
+    for (const secret of [baseURL, "synthetic-user", "synthetic-password", "synthetic-query"]) {
+      expect(original).not.toContain(secret);
+    }
+    for (const part of ["synthetic-user", "synthetic-password", "synthetic-query", "gateway", "/v1"]) {
+      expect(discoveryCacheKey("models", baseURL.replace(part, "changed"))).not.toBe(original);
+    }
+    expect(discoveryCacheKey("model-info", baseURL)).not.toBe(original);
   });
 
   it("isolates all effective auth/tenant headers without exposing secrets and ignores header casing/order", () => {
@@ -54,6 +69,47 @@ describe("discoveryCacheKey", () => {
     expect(key({})).not.toBe(original);
     expect(key({ Authorization: "first", authorization: "last" })).toBe(key({ authorization: "last" }));
     expect(key({ "X-Tenant": "a" }, "key-a")).not.toBe(key({ "X-Tenant": "a" }, "key-b"));
+  });
+});
+
+describe("discovery cache projections", () => {
+  it("retains every consumed metadata field, including zero and negative capability reports", () => {
+    const model_info = {
+      mode: "chat", max_tokens: 512, max_input_tokens: 200000, max_output_tokens: 4096,
+      input_cost_per_token: 0, output_cost_per_token: 0.000002,
+      cache_read_input_token_cost: 0.000003, cache_creation_input_token_cost: 0.000004,
+      input_cost_per_token_above_200k_tokens: 0.000005, output_cost_per_token_above_200k_tokens: 0.000006,
+      cache_read_input_token_cost_above_200k_tokens: 0.000007, cache_creation_input_token_cost_above_200k_tokens: 0.000008,
+      supports_reasoning: false, reasoning: true, supports_function_calling: false, supports_tool_choice: true,
+      supports_vision: false, supports_audio_input: true, supports_audio_output: false, supports_pdf_input: true,
+      supported_openai_params: ["max_tokens", "max_completion_tokens"],
+    };
+    const entry = {
+      model_name: "public-route*",
+      litellm_params: { model: "upstream-alias", merge_reasoning_content_in_choices: false },
+      model_info,
+    };
+    expect(cacheModelInfo(entry)).toEqual(entry);
+    expect(cacheModelInfo({ ...entry, model_info: { ...model_info, max_tokens: "512", input_cost_per_token: "0" } }))
+      .toEqual(entry);
+    expect(cacheModel({ id: "public-route*", mode: "chat", object: "model", owned_by: "synthetic-owner-secret", created: 123 }))
+      .toEqual({ id: "public-route*", mode: "chat" });
+  });
+
+  it("drops arbitrary nested payloads and validates values inside allowlisted fields", () => {
+    const secret = { api_key: "synthetic-nested-secret" };
+    const result = cacheModelInfo({
+      model_name: "model", litellm_params: { api_key: "synthetic-upstream-secret", model: "alias", merge_reasoning_content_in_choices: secret },
+      model_info: {
+        key: "synthetic-key-secret", team_id: secret, provider_specific_entry: secret,
+        input_cost_per_token: secret, max_tokens: "synthetic-numeric-secret", supports_reasoning: secret,
+        supported_openai_params: ["max_tokens", "synthetic-param-secret", "temperature"],
+      },
+    } as never);
+    expect(result).toEqual({
+      model_name: "model", litellm_params: { model: "alias" },
+      model_info: { supported_openai_params: ["max_tokens"] },
+    });
   });
 });
 
