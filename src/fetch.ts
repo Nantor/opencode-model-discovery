@@ -27,6 +27,7 @@ async function fetchEndpoint<T>(
   path: string,
   apiKey?: string,
   timeoutMs = 10_000,
+  signal?: AbortSignal,
 ): Promise<T> {
   const url = `${trimTrailingSlashes(baseURL)}${path}`;
   const headers: Record<string, string> = {
@@ -39,7 +40,8 @@ async function fetchEndpoint<T>(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { headers, signal: controller.signal });
+    const res = await fetch(url, { headers, signal: signal
+      ? AbortSignal.any([signal, controller.signal]) : controller.signal });
     if (!res.ok) {
       throw new Error(`HTTP ${res.status} ${res.statusText} from ${url}`);
     }
@@ -98,6 +100,7 @@ export async function fetchModels(
   baseURL: string,
   apiKey?: string,
   timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<LiteLLMModel[]> {
   const url = normalizeBaseURL(baseURL);
   const json = await fetchEndpoint<LiteLLMModelsResponse>(
@@ -105,6 +108,7 @@ export async function fetchModels(
     "/v1/models?return_wildcard_routes=true",
     apiKey,
     timeoutMs,
+    signal,
   );
   if (!Array.isArray(json.data)) {
     throw new Error(`Unexpected response from ${url}/v1/models: missing data array`);
@@ -120,6 +124,7 @@ export async function fetchModelInfo(
   baseURL: string,
   apiKey?: string,
   timeoutMs?: number,
+  signal?: AbortSignal,
 ): Promise<LiteLLMModelInfoEntry[]> {
   const url = normalizeBaseURL(baseURL);
   const json = await fetchEndpoint<LiteLLMModelInfoResponse>(
@@ -127,6 +132,7 @@ export async function fetchModelInfo(
     "/v2/model/info?return_wildcard_routes=true",
     apiKey,
     timeoutMs,
+    signal,
   );
 
   if (!Array.isArray(json.data)) {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Provider } from "@opencode/plugin";
 import type { Context } from "@opencode/plugin/promise/plugin";
 
@@ -60,14 +61,18 @@ async function readOrFetchCache<T>(
   fetch: () => Promise<T[]>,
   isItem: (value: unknown) => value is T,
   allowPartialCache = false,
+  signal?: AbortSignal,
 ): Promise<T[]> {
+  signal?.throwIfAborted();
   if (!storage || cacheDurationMs === undefined) return fetch();
   const isCachedValue = allowPartialCache
     ? (value: unknown): value is unknown[] => Array.isArray(value)
     : isArrayOf(isItem);
   const cached = await readCache(storage, key, cacheDurationMs, isCachedValue);
+  signal?.throwIfAborted();
   if (cached !== undefined) return cached.filter(isItem);
   const fresh = await fetch();
+  signal?.throwIfAborted();
   await writeCache(storage, key, fresh);
   return fresh;
 }
@@ -181,6 +186,7 @@ export async function discoverProviderModels(
   provider: OpenCodeProvider | undefined,
   log?: Logger,
   storage?: Storage,
+  lifecycle?: { signal: AbortSignal; fingerprint: string },
 ): Promise<void> {
   if (!provider) return;
   const options = provider.options;
@@ -213,14 +219,18 @@ export async function discoverProviderModels(
         `Ignoring invalid discoveryCache "${String(pluginOptions.discoveryCache)}" for provider "${providerID}": expected a positive ISO 8601 duration such as "PT1H" or "P1D" (months and years are not supported)`,
       );
     }
-    const modelsCacheKey = discoveryCacheKey("models", discoveryBaseURL, options.apiKey);
-    const infoCacheKey = discoveryCacheKey("model-info", discoveryBaseURL, options.apiKey);
+    // V2 cache entries also follow the complete source/settings identity.
+    const cacheScope = lifecycle ? `:${lifecycle.fingerprint}` : "";
+    const modelsCacheKey = discoveryCacheKey("models", discoveryBaseURL, options.apiKey) + cacheScope;
+    const infoCacheKey = discoveryCacheKey("model-info", discoveryBaseURL, options.apiKey) + cacheScope;
     const models = await readOrFetchCache(
       storage,
       modelsCacheKey,
       cacheDurationMs,
-      () => fetchModels(discoveryBaseURL, options.apiKey, timeoutMs),
+      () => fetchModels(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal),
       isLiteLLMModel,
+      false,
+      lifecycle?.signal,
     );
     let infoEntries: LiteLLMModelInfoEntry[] = [];
     try {
@@ -228,13 +238,15 @@ export async function discoverProviderModels(
         storage,
         infoCacheKey,
         cacheDurationMs,
-        () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs),
+        () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal),
         isLiteLLMModelInfoEntry,
         // Older caches can contain malformed entries. Keep usable metadata even
         // when refetching the optional endpoint would fail.
         true,
+        lifecycle?.signal,
       );
     } catch (error) {
+      lifecycle?.signal.throwIfAborted();
       await safeLog(
         log,
         "warn",
@@ -304,6 +316,7 @@ export async function discoverProviderModels(
       }
     }
 
+    lifecycle?.signal.throwIfAborted();
     const configuredModels = provider.models;
     provider.models = {
       ...discovered.models,
@@ -318,6 +331,7 @@ export async function discoverProviderModels(
     addMaxCompletionTokensTransform(provider, discoveredEntries);
     await safeLog(log, "info", `Discovered ${discoveredEntries.length} usable model(s) for provider "${providerID}"`);
   } catch (error) {
+    if (lifecycle?.signal.aborted) return;
     await safeLog(
       log,
       "error",
@@ -350,13 +364,50 @@ export async function applyDiscovery(
   }
 }
 
-export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
+type DiscoveryState = {
+  fingerprint: string;
+  controller: AbortController;
+  failures: number;
+  result:
+    | { status: "in-flight" }
+    | { status: "failure"; retryAt: number }
+    | { status: "success"; refreshAt: number; models: Map<string, DiscoveredModelInfo>; enrichExistingModels: boolean };
+};
+
+// JSON settings compare by value, irrespective of insertion order. Plugins can
+// also supply functions/opaque options: compare those by identity. Keep only a
+// digest in the state; credentials must not become a plaintext identity.
+function createDiscoveryFingerprint(): (source: unknown) => string {
+  const identities = new WeakMap<object, number>();
+  let nextIdentity = 0;
+  const identity = (value: object): number => {
+    let id = identities.get(value);
+    if (id === undefined) identities.set(value, id = nextIdentity++);
+    return id;
+  };
+  return (source) => {
+    const seen = new Map<object, number>();
+    const encode = (value: unknown): unknown => {
+      if (typeof value === "function") return ["function", identity(value)];
+      if (value === null || typeof value !== "object") return [typeof value, String(value)];
+      if (seen.has(value)) return ["reference", seen.get(value)];
+      seen.set(value, seen.size);
+      if (Array.isArray(value)) return ["array", value.map(encode)];
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) return ["opaque", identity(value)];
+      return ["object", Object.entries(value)
+        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+        .map(([key, item]) => [key, encode(item)])];
+    };
+    return createHash("sha256").update(JSON.stringify(encode(source))).digest("hex");
+  };
+}
+
+export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> => {
   const log: Logger = (level, message) => console[level](`[opencode-model-discovery] ${message}`);
-  const discoveredModels = new Map<string, {
-    models: Map<string, DiscoveredModelInfo>;
-    enrichExistingModels: boolean;
-  }>();
-  const discoveryStarted = new Set<string>();
+  const states = new Map<string, DiscoveryState>();
+  const discoveryFingerprint = createDiscoveryFingerprint();
+  let disposed = false;
 
   // This cleanup is independent of discovery. It can run before configured
   // providers are materialized; the config provider transform will apply its
@@ -374,36 +425,78 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
   // source and therefore cannot add inventory for configured providers.
   // ModelEditor.update can create a model for an available provider.
   await ctx.model.transform((editor) => {
-    for (const record of editor.provider.list()) {
+    if (disposed) return;
+    const records = editor.provider.list();
+    const present = new Set<string>(records.map((record) => record.provider.id));
+    for (const [id, state] of states) {
+      if (present.has(id)) continue;
+      state.controller.abort();
+      states.delete(id);
+    }
+    for (const record of records) {
       const providerID = record.provider.id;
-      if (discoveryStarted.has(providerID)) continue;
-
       const provider = providerFromV2(record.provider);
       const pluginOptions = provider.options?.["opencode-model-discovery"];
+      let previous = states.get(providerID);
+      const fingerprint = discoveryFingerprint({ provider: record.provider, sourceConnection: record.sourceConnection });
+      if (pluginOptions?.discovery !== true || previous?.fingerprint !== fingerprint) {
+        previous?.controller.abort();
+        states.delete(providerID);
+        previous = undefined;
+      }
       if (pluginOptions?.discovery !== true) continue;
+      if (previous?.result.status === "in-flight") continue;
+      if (previous?.result.status === "success" && Date.now() <= previous.result.refreshAt) continue;
+      if (previous?.result.status === "failure" && Date.now() < previous.result.retryAt) continue;
 
-      discoveryStarted.add(providerID);
+      const state: DiscoveryState = {
+        fingerprint,
+        controller: new AbortController(),
+        failures: previous?.failures ?? 0,
+        result: { status: "in-flight" },
+      };
+      previous?.controller.abort();
+      states.set(providerID, state);
+      const isCurrent = (): boolean => !disposed && states.get(providerID) === state;
+      const fail = (): void => {
+        if (!isCurrent()) return;
+        state.failures += 1;
+        // Retries require a later host replay, with capped exponential backoff.
+        // Failure never requests reload: even other providers' success replays
+        // cannot create an immediate retry/reload loop.
+        state.result = { status: "failure", retryAt: Date.now() + Math.min(60_000, 1_000 * 2 ** Math.min(state.failures - 1, 6)) };
+      };
+
       // Transforms are synchronous. Start discovery from the post-config
       // source visible here, then reload to replay this transform once the
       // discovered inventory is available. Do not register another transform.
       void (async (): Promise<void> => {
-        await discoverProviderModels(providerID, provider, log, ctx.storage);
-        if (provider.models) {
-          discoveredModels.set(
-            providerID,
-            {
-              models: modelDraftsToV2(provider.models),
-              enrichExistingModels: pluginOptions.enrichExistingModels === true,
-            },
-          );
+        await discoverProviderModels(providerID, provider, log, ctx.storage, { signal: state.controller.signal, fingerprint });
+        if (!isCurrent()) return;
+        if (!provider.models) {
+          fail();
+          return;
         }
+        state.failures = 0;
+        state.result = {
+          status: "success",
+          // Cache expiry is an intentional refresh boundary on a later replay.
+          // A minimum interval prevents tiny TTLs from feeding reload loops.
+          refreshAt: Date.now() + Math.max(1_000, parseCacheDuration(pluginOptions.discoveryCache) ?? Infinity),
+          models: modelDraftsToV2(provider.models),
+          enrichExistingModels: pluginOptions.enrichExistingModels === true,
+        };
         await ctx.model.reload();
       })().catch((error: unknown) => {
+        if (!isCurrent()) return;
+        if (state.result.status === "in-flight") fail();
         console.error("[opencode-model-discovery]", error);
       });
     }
 
-    for (const [providerID, { models, enrichExistingModels }] of discoveredModels) {
+    for (const [providerID, state] of states) {
+      if (state.result.status !== "success") continue;
+      const { models, enrichExistingModels } = state.result;
       const provider = editor.provider.get(providerID);
       if (!provider) continue;
       for (const [modelID, discoveredModel] of models) {
@@ -422,12 +515,19 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
       }
     }
   });
+  return () => {
+    disposed = true;
+    for (const state of states.values()) state.controller.abort();
+    states.clear();
+  };
 };
 
 function providerFromV2(info: Pick<Provider.Info, "id" | "name" | "settings">): OpenCodeProvider {
+  const options = info.settings as OpenCodeProvider["options"];
   return {
     name: info.name,
-    options: info.settings as OpenCodeProvider["options"],
+    // Snapshot discovery inputs without cloning unrelated callable adapter options.
+    options: { ...options, "opencode-model-discovery": structuredClone(options?.["opencode-model-discovery"]) },
   };
 }
 
