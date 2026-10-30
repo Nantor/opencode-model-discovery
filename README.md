@@ -64,6 +64,24 @@ When `/v2/model/info` identifies a model as supporting `max_completion_tokens` b
 
 Restart OpenCode after changing plugin or provider configuration.
 
+## Plugin Settings
+
+Configure these settings separately for each provider under `providers.<provider-id>.settings["opencode-model-discovery"]`, as shown in the installation example. Discovery is opt-in; providers without `discovery: true` are not queried.
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `discovery` | `boolean` | `false` | Enable model discovery for this provider. |
+| `discoveryBaseURL` | `string` | Provider's `settings.baseURL` | Override the endpoint used for discovery and metadata requests. May include `/v1`; inference still uses the required provider `baseURL`. |
+| `discoveryTimeout` | `number` | `10000` | Timeout in milliseconds for discovery and metadata requests. Must be finite and non-negative; invalid values use the default. |
+| `discoveryCache` | `string` | Disabled | Cache model lists and metadata in OpenCode plugin storage for a positive ISO 8601 duration, such as `"PT1H"`, `"P1D"`, or `"P2W"`. Invalid or zero durations disable caching; months and years are not supported. |
+| `enhanceFromModelsDev` | `boolean` | `false` | Fill missing non-pricing model metadata from models.dev. See [models.dev Enhancement](#modelsdev-enhancement) for matching and fallback behavior. |
+| `modelsDevIgnorePrefixes` | `string[]` | `[]` | Remove the longest matching literal prefix once before models.dev lookup, after stripping the provider path. Only applies when enhancement is enabled. |
+| `modelsDevIgnorePostfixes` | `string[]` | `[]` | Remove the longest matching literal postfix once before models.dev lookup. Only applies when enhancement is enabled. |
+
+Prefix and postfix matching is case-sensitive and does not change discovered model keys, request IDs, or display names. Empty or non-string entries are ignored.
+
+These settings are consumed by the plugin and are not passed to the underlying provider runtime. Provider connection settings such as `baseURL` and `apiKey` belong alongside the `opencode-model-discovery` object, not inside it.
+
 ## models.dev Enhancement
 
 LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, token limits, or complete input/output capabilities. Set `enhanceFromModelsDev` to `true` to fill those non-pricing gaps directly from `https://models.dev/models.json`, fetched using the official `@opencode-ai/models` client. Enrichment uses OpenCode's `Model.Info` types and maps tool calling, modalities, and reasoning compatibility to runtime fields before applying OpenCode defaults. Fields without a runtime equivalent (`temperature`, `attachment`, and `knowledge`) are not copied; release-date enrichment is also omitted. The plugin does not read OpenCode's cached catalog. Pricing is never copied from this catalog:
@@ -125,8 +143,6 @@ The script also writes `debug/<provider-id>.models-dev.json`, keyed by each mode
 ## Model Names
 
 Model IDs are normalized into display names. For example, `openai/gpt-4o-mini` becomes `Gpt 4o Mini`.
-
-`discovery`, `discoveryBaseURL`, `discoveryTimeout`, `discoveryCache`, `enhanceFromModelsDev`, `modelsDevIgnorePrefixes`, and `modelsDevIgnorePostfixes` are consumed by the plugin (nested under the `opencode-model-discovery` settings key) and are not passed to the underlying provider runtime.
 
 Keep provider credentials in environment variables or a secret manager. Do not store live API keys in project environment files or commit them to source control.
 
