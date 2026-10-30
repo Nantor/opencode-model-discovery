@@ -2,7 +2,7 @@ import { Models } from "@opencode-ai/models";
 import { Model } from "@opencode/plugin";
 
 import { loadModelsDevSnapshot } from "./models-dev-snapshot.ts";
-import { modelModalityDraft } from "./provider.ts";
+import { modelModalityDraft, sanitizeModalityList } from "./provider.ts";
 import type {
   Logger,
   LiteLLMModelInfo,
@@ -122,7 +122,7 @@ export function enhanceModelInfo(
   // Catalog capabilities fill the rest, with explicit true/false taking precedence.
   const reportedModalities = modelModalityDraft(modalityInfo, modelsDevEntry.modalities);
   for (const field of ["input", "output"] as const) {
-    const value = reportedModalities[field] ?? modelEntry.capabilities?.[field] ?? modelsDevEntry.modalities?.[field];
+    const value = reportedModalities[field] ?? modelEntry.capabilities?.[field] ?? sanitizeModalityList(modelsDevEntry.modalities?.[field]);
     if (Array.isArray(value)) {
       modelEntry.capabilities = { ...modelEntry.capabilities, [field]: [...value] };
     }

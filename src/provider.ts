@@ -38,6 +38,15 @@ export function modelLimitDraft(info: LiteLLMModelInfo): DiscoveredModelInfo["li
   };
 }
 
+/** Keep usable catalog modalities; malformed directions are unreported, not empty. */
+export function sanitizeModalityList(value: unknown): OpenCodeModelModalities["input"] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const modalities = value.filter((entry): entry is OpenCodeModelModalities["input"][number] =>
+    typeof entry === "string" && ["text", "audio", "image", "video", "pdf"].includes(entry),
+  );
+  return value.length === 0 || modalities.length > 0 ? modalities : undefined;
+}
+
 /** Resolve reported modality flags independently, leaving unreported directions absent. */
 export function modelModalityDraft(
   info: LiteLLMModelInfo,
@@ -51,7 +60,7 @@ export function modelModalityDraft(
   for (const direction of ["input", "output"] as const) {
     const reported = flags[direction].filter(([, value]) => typeof value === "boolean");
     if (reported.length === 0) continue;
-    const modalities = new Set<OpenCodeModelModalities["input"][number]>(fallback?.[direction] ?? ["text"]);
+    const modalities = new Set<OpenCodeModelModalities["input"][number]>(sanitizeModalityList(fallback?.[direction]) ?? ["text"]);
     for (const [modality, supported] of reported) {
       if (supported) modalities.add(modality);
       else modalities.delete(modality);

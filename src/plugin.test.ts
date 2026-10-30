@@ -6,6 +6,7 @@ import type { ModelsDevData } from "./types.js";
 
 import { createMemoryStorage, discoveryCacheKey, writeCache } from "./cache.js";
 import { applyDiscovery, ModelDiscoveryPlugin } from "./plugin.js";
+import * as modelsDev from "./models-dev.js";
 import type { OpenCodeConfig, OpenCodeProvider } from "./types.js";
 import { fillMissingFields } from "./utils.js";
 
@@ -1007,6 +1008,66 @@ describe("applyDiscovery", () => {
     expect(models?.["explicit-output"].limit).toEqual({ context: 128000, input: 120000, output: 8192 });
   });
 
+  it.each([{}, "image", [null, {}, 42], ["text", "image", null, 42]])("keeps discovery and neighboring enrichment with malformed catalog input %j", async (inputModalities) => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://models.dev/models.json") return Response.json({
+        "vendor/m": { id: "vendor/m", name: "m", description: "synthetic", modalities: { input: inputModalities, output: ["text"] } },
+        "vendor/good": { id: "vendor/good", name: "good", description: "synthetic", family: "neighbor", modalities: { input: ["text", "pdf"], output: ["text"] } },
+      });
+      return Response.json({ data: url.includes("/models") ? [{ id: "m" }, { id: "good" }] : [
+        { model_name: "m", litellm_params: {}, model_info: { supports_vision: false } },
+      ] });
+    });
+    const config: OpenCodeConfig = { provider: { p: { options: {
+      baseURL: "https://llm.example.com/v1",
+      "opencode-model-discovery": { discovery: true, enhanceFromModelsDev: true },
+    } } } };
+    const log = vi.fn();
+
+    await applyDiscovery(config, log);
+
+    const models = providerFor(config, "p").models;
+    expect(Object.keys(models ?? {}).sort()).toEqual(["good", "m"]);
+    expect(models?.m).toMatchObject({ name: "M", attachment: false, modalities: { input: ["text"], output: ["text"] } });
+    expect(models?.good).toMatchObject({ name: "Good", family: "neighbor", modalities: { input: ["text", "pdf"], output: ["text"] } });
+    expect(log).not.toHaveBeenCalledWith("error", expect.any(String));
+  });
+
+  it("logs an unexpected per-model enhancement failure and retains basic discovery", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://models.dev/models.json") return Response.json(Object.fromEntries(["m", "good"].map((id) => [id, {
+        id, name: id, description: "synthetic", family: "catalog", tool_call: true,
+      }])));
+      return Response.json({ data: url.includes("/models") ? [{ id: "m" }, { id: "good" }] : [
+        { model_name: "m", litellm_params: {}, model_info: { supports_vision: false, max_input_tokens: 8192, max_output_tokens: 1024 } },
+      ] });
+    });
+    const enhance = modelsDev.enhanceModelInfo;
+    const spy = vi.spyOn(modelsDev, "enhanceModelInfo").mockImplementation((draft, catalog, ...args) => {
+      enhance(draft, catalog, ...args);
+      if (catalog.id === "m") throw new Error("synthetic enhancement failure");
+    });
+    const config: OpenCodeConfig = { provider: { p: { options: {
+      baseURL: "https://llm.example.com/v1",
+      "opencode-model-discovery": { discovery: true, enhanceFromModelsDev: true },
+    } } } };
+    const log = vi.fn();
+    try {
+      await applyDiscovery(config, log);
+      const models = providerFor(config, "p").models;
+      expect(models?.m).toMatchObject({ name: "M", attachment: false, limit: { context: 8192, input: 8192, output: 1024 } });
+      expect(models?.m?.family).toBeUndefined();
+      expect(models?.m?.tool_call).toBeUndefined();
+      expect(models?.good).toMatchObject({ name: "Good", family: "catalog", tool_call: true });
+      expect(log).toHaveBeenCalledWith("warn", 'Could not enhance model "m" for provider "p" from models.dev: synthetic enhancement failure');
+      expect(log).not.toHaveBeenCalledWith("error", expect.any(String));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("enhances discovery from the bundled snapshot when models.dev is unavailable", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -1085,13 +1146,21 @@ describe("ModelDiscoveryPlugin", () => {
       { model_name: "mixed", litellm_params: {}, model_info: { supports_vision: false, supports_audio_input: true, supports_audio_output: false } },
       { model_name: "output-only-reported", litellm_params: {}, model_info: { supports_audio_output: true } },
       { model_name: "unreported", litellm_params: {}, model_info: {} },
+      { model_name: "malformed-input", litellm_params: {}, model_info: { supports_vision: false } },
+      { model_name: "malformed-output", litellm_params: {}, model_info: { supports_audio_output: true } },
+      { model_name: "malformed-unreported", litellm_params: {}, model_info: {} },
     ];
     const catalogModalities = { input: ["text", "image", "audio", "pdf"], output: ["text", "audio"] };
+    const malformedModalities: Record<string, unknown> = {
+      "malformed-input": { input: {}, output: ["text", null, 42] },
+      "malformed-output": { input: ["text", null, "pdf"], output: "audio" },
+      "malformed-unreported": { input: [null, {}, 42], output: {} },
+    };
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url === "https://models.dev/models.json") {
         return Response.json(Object.fromEntries(entries.map(({ model_name: id }) => [id, {
-          id, name: id, description: "Test model", modalities: catalogModalities,
+          id, name: id, description: "Test model", modalities: malformedModalities[id] ?? catalogModalities,
         }])));
       }
       return Response.json({ data: url.includes("/models")
@@ -1133,6 +1202,9 @@ describe("ModelDiscoveryPlugin", () => {
       mixed: { input: enhanceFromModelsDev ? ["text", "audio", "pdf"] : ["text", "audio"], output: ["text"] },
       "output-only-reported": { input: enhanceFromModelsDev ? catalogModalities.input : ["text", "image"], output: ["text", "audio"] },
       unreported: enhanceFromModelsDev ? catalogModalities : { input: ["text", "image"], output: ["text"] },
+      "malformed-input": { input: ["text"], output: ["text"] },
+      "malformed-output": { input: enhanceFromModelsDev ? ["text", "pdf"] : ["text", "image"], output: ["text", "audio"] },
+      "malformed-unreported": { input: ["text", "image"], output: ["text"] },
     };
     for (const [id, modalities] of Object.entries(expected)) {
       expect(updated.get(id)?.capabilities, id).toEqual({ tools: true, ...modalities });

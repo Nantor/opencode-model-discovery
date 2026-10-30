@@ -305,17 +305,23 @@ export async function discoverProviderModels(
         for (const entry of discoveredEntries) {
           const modelEntry = discovered.models?.[entry.model_name];
           if (!modelEntry) continue;
-          const modelsDevEntry = findModelsDevEntry(
-            modelsDevData,
-            entry.model_name,
-            pluginOptions,
-          );
-          if (modelsDevEntry) {
-            const draft = runtimeDrafts.get(modelEntry) ?? modelInfoDraft(modelEntry);
-            enhanceModelInfo(draft, modelsDevEntry,
-              typeof entry.model_info.supports_reasoning === "boolean" || typeof entry.model_info.reasoning === "boolean",
-              entry.model_info);
-            applyModelInfoDraft(modelEntry, draft);
+          try {
+            const modelsDevEntry = findModelsDevEntry(
+              modelsDevData,
+              entry.model_name,
+              pluginOptions,
+            );
+            if (modelsDevEntry) {
+              // Optional enrichment must not partially mutate the basic discovery draft on failure.
+              const draft = structuredClone(runtimeDrafts.get(modelEntry) ?? modelInfoDraft(modelEntry));
+              enhanceModelInfo(draft, modelsDevEntry,
+                typeof entry.model_info.supports_reasoning === "boolean" || typeof entry.model_info.reasoning === "boolean",
+                entry.model_info);
+              applyModelInfoDraft(modelEntry, draft);
+              runtimeDrafts.set(modelEntry, draft);
+            }
+          } catch (error) {
+            await safeLog(log, "warn", `Could not enhance model "${entry.model_name}" for provider "${providerID}" from models.dev: ${errorMessage(error)}`);
           }
         }
       }

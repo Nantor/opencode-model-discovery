@@ -7,7 +7,7 @@ import {
   getModelsDevData,
 } from "./models-dev.js";
 import { loadModelsDevSnapshot } from "./models-dev-snapshot.js";
-import type { DiscoveredModelInfo, ModelsDevData, ModelsDevModel } from "./types.js";
+import type { DiscoveredModelInfo, LiteLLMModelInfo, ModelsDevData, ModelsDevModel } from "./types.js";
 import { Model } from "@opencode/plugin";
 
 const sampleModels: Record<string, ModelsDevModel> = Object.fromEntries(Object.entries({
@@ -160,6 +160,36 @@ describe("findModelsDevEntry", () => {
 });
 
 describe("enhanceModelInfo", () => {
+  it.each([
+    { value: {}, expected: undefined, input: ["text", "audio"], output: ["text"] },
+    { value: "image", expected: undefined, input: ["text", "audio"], output: ["text"] },
+    { value: null, expected: undefined, input: ["text", "audio"], output: ["text"] },
+    { value: [null, {}, 7, true, "unsupported"], expected: undefined, input: ["text", "audio"], output: ["text"] },
+    { value: ["text", {}, "image", 7, "audio", null, "pdf", "video"], expected: ["text", "image", "audio", "pdf", "video"], input: ["text", "audio", "pdf", "video"], output: ["text", "image", "pdf", "video"] },
+    { value: [], expected: [], input: ["audio"], output: [] },
+  ])("sanitizes catalog directions before gap filling or applying flags: $value", ({ value, expected, input, output }) => {
+    const catalog = {
+      id: "vendor/m", name: "m", description: "Test model",
+      modalities: { input: value, output: value },
+    } as unknown as ModelsDevModel;
+    const unreported: DiscoveredModelInfo = {};
+    enhanceModelInfo(unreported, catalog);
+    expect(unreported.capabilities?.input).toEqual(expected);
+    expect(unreported.capabilities?.output).toEqual(expected);
+
+    const flags: LiteLLMModelInfo = {
+      supports_vision: false, supports_audio_input: true, supports_audio_output: false,
+    };
+    const reported: DiscoveredModelInfo = {};
+    enhanceModelInfo(reported, catalog, false, flags);
+    expect(reported.capabilities?.input).toEqual(input);
+    expect(reported.capabilities?.output).toEqual(output);
+
+    const existing: DiscoveredModelInfo = { capabilities: { input: ["text", "pdf"], output: ["text"] } };
+    enhanceModelInfo(existing, catalog);
+    expect(existing.capabilities).toEqual({ input: ["text", "pdf"], output: ["text"] });
+  });
+
   it("fills undefined fields from the models.dev entry", () => {
     const modelEntry: DiscoveredModelInfo = { name: "Gpt 4o" };
     enhanceModelInfo(modelEntry, sampleModels["gpt-4o"]);
