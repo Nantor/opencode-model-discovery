@@ -33,7 +33,6 @@ type RequestBodyTransform = (
   body: Record<string, unknown>,
 ) => Record<string, unknown>;
 
-const MAX_COMPLETION_TOKENS = Symbol("maxCompletionTokens");
 const runtimeDrafts = new WeakMap<OpenCodeModelEntry, DiscoveredModelInfo>();
 
 // LiteLLM `/models` and `model_info.mode` values that can never serve /chat/completions.
@@ -113,9 +112,13 @@ function entriesForModels(
   return resolved;
 }
 
-function usesMaxCompletionTokens(entry: LiteLLMModelInfoEntry): boolean {
+function maxTokensField(entry: LiteLLMModelInfoEntry): "max_tokens" | "max_completion_tokens" | undefined {
   const parameters = entry.model_info.supported_openai_params;
-  return parameters?.includes("max_completion_tokens") === true;
+  // Prefer the newer parameter when both are supported; absent metadata leaves
+  // OpenCode's provider/endpoint detection in charge.
+  if (parameters?.includes("max_completion_tokens")) return "max_completion_tokens";
+  if (parameters?.includes("max_tokens")) return "max_tokens";
+  return undefined;
 }
 
 function isOpenCodeModel(entry: LiteLLMModelInfoEntry): boolean {
@@ -131,17 +134,10 @@ function addMaxCompletionTokensTransform(
 ): void {
   const modelIDs = new Set(
     entries
-      .filter(usesMaxCompletionTokens)
+      .filter((entry) => maxTokensField(entry) === "max_completion_tokens")
       .map((entry) => entry.model_name),
   );
   if (modelIDs.size === 0) return;
-
-  for (const modelID of modelIDs) {
-    const model = provider.models?.[modelID];
-    if (model) {
-      Object.defineProperty(model, MAX_COMPLETION_TOKENS, { value: true });
-    }
-  }
 
   // `transformRequestBody` is the request hook of @ai-sdk/openai-compatible.
   // OpenCode forwards `provider.options` to the adapter factory verbatim, and
@@ -265,6 +261,10 @@ export async function discoverProviderModels(
       if (!model) continue;
       const draft = modelInfoDraft(model);
       const info = entry.model_info;
+      const tokenField = maxTokensField(entry);
+      if (tokenField) {
+        draft.compatibility = { ...draft.compatibility, maxTokensField: tokenField };
+      }
       // Read limits directly from metadata: the legacy bridge cannot represent partial limits.
       const limit = modelLimitDraft(info);
       if (limit) draft.limit = limit;
@@ -427,10 +427,6 @@ function modelDraftsToV2(
   models: Record<string, OpenCodeModelEntry>,
 ): Map<string, DiscoveredModelInfo> {
   return new Map(Object.entries(models).map(([id, entry]) => {
-    const model = { ...(runtimeDrafts.get(entry) ?? modelInfoDraft(entry)) };
-    if ((entry as Record<PropertyKey, unknown>)[MAX_COMPLETION_TOKENS] === true) {
-      model.compatibility = { ...model.compatibility, maxTokensField: "max_completion_tokens" };
-    }
-    return [id, model];
+    return [id, { ...(runtimeDrafts.get(entry) ?? modelInfoDraft(entry)) }];
   }));
 }
