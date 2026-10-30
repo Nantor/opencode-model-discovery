@@ -259,8 +259,8 @@ export async function discoverProviderModels(
     for (const entry of discoveredEntries) {
       const model = discovered.models?.[entry.model_name];
       if (!model) continue;
-      const draft = modelInfoDraft(model);
       const info = entry.model_info;
+      const draft = modelInfoDraft(model, info);
       const tokenField = maxTokensField(entry);
       if (tokenField) {
         draft.compatibility = { ...draft.compatibility, maxTokensField: tokenField };
@@ -289,7 +289,8 @@ export async function discoverProviderModels(
           if (modelsDevEntry) {
             const draft = runtimeDrafts.get(modelEntry) ?? modelInfoDraft(modelEntry);
             enhanceModelInfo(draft, modelsDevEntry,
-              typeof entry.model_info.supports_reasoning === "boolean" || typeof entry.model_info.reasoning === "boolean");
+              typeof entry.model_info.supports_reasoning === "boolean" || typeof entry.model_info.reasoning === "boolean",
+              entry.model_info);
             applyModelInfoDraft(modelEntry, draft);
           }
         }

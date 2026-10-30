@@ -5,6 +5,7 @@ import type {
   LiteLLMParams,
   OpenCodeModelCost,
   OpenCodeModelEntry,
+  OpenCodeModelModalities,
   OpenCodeProvider,
 } from "./types.js";
 import { normalizeBaseURL } from "./fetch.js";
@@ -35,6 +36,29 @@ export function modelLimitDraft(info: LiteLLMModelInfo): DiscoveredModelInfo["li
     ...(inputTokens !== undefined ? { input: inputTokens } : {}),
     ...(outputTokens !== undefined ? { output: outputTokens } : {}),
   };
+}
+
+/** Resolve reported modality flags independently, leaving unreported directions absent. */
+export function modelModalityDraft(
+  info: LiteLLMModelInfo,
+  fallback?: Partial<OpenCodeModelModalities>,
+): Partial<OpenCodeModelModalities> {
+  const flags = {
+    input: [["image", info.supports_vision], ["audio", info.supports_audio_input], ["pdf", info.supports_pdf_input]],
+    output: [["audio", info.supports_audio_output]],
+  } as const;
+  const result: Partial<OpenCodeModelModalities> = {};
+  for (const direction of ["input", "output"] as const) {
+    const reported = flags[direction].filter(([, value]) => typeof value === "boolean");
+    if (reported.length === 0) continue;
+    const modalities = new Set<OpenCodeModelModalities["input"][number]>(fallback?.[direction] ?? ["text"]);
+    for (const [modality, supported] of reported) {
+      if (supported) modalities.add(modality);
+      else modalities.delete(modality);
+    }
+    result[direction] = [...modalities];
+  }
+  return result;
 }
 
 export function buildProviderConfig(
@@ -138,28 +162,16 @@ export function buildProviderConfig(
       }
 
       // --- attachment (vision / image input) ---
-      if (info.supports_vision === true) {
-        modelEntry.attachment = true;
+      if (typeof info.supports_vision === "boolean") {
+        modelEntry.attachment = info.supports_vision;
       }
 
       // --- modalities ---
-      const inputModalities: Array<
-        "text" | "audio" | "image" | "video" | "pdf"
-      > = ["text"];
-      if (info.supports_vision === true) inputModalities.push("image");
-      if (info.supports_audio_input === true) inputModalities.push("audio");
-      if (info.supports_pdf_input === true) inputModalities.push("pdf");
-
-      const outputModalities: Array<
-        "text" | "audio" | "image" | "video" | "pdf"
-      > = ["text"];
-      if (info.supports_audio_output === true) outputModalities.push("audio");
-
-      // Only set modalities when we have something beyond the plain text default
-      if (inputModalities.length > 1 || outputModalities.length > 1) {
+      const modalities = modelModalityDraft(info);
+      if (modalities.input !== undefined || modalities.output !== undefined) {
         modelEntry.modalities = {
-          input: inputModalities,
-          output: outputModalities,
+          input: modalities.input ?? ["text"],
+          output: modalities.output ?? ["text"],
         };
       }
     }

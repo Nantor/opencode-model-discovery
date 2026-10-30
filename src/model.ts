@@ -1,8 +1,9 @@
 import { Model, Provider } from "@opencode/plugin";
-import type { DiscoveredModelInfo, OpenCodeModelCost, OpenCodeModelEntry } from "./types.js";
+import type { DiscoveredModelInfo, LiteLLMModelInfo, OpenCodeModelCost, OpenCodeModelEntry } from "./types.js";
+import { modelModalityDraft } from "./provider.js";
 
 /** Convert the legacy public API shape into an OpenCode discovery draft. */
-export function modelInfoDraft(entry: OpenCodeModelEntry): DiscoveredModelInfo {
+export function modelInfoDraft(entry: OpenCodeModelEntry, info?: LiteLLMModelInfo): DiscoveredModelInfo {
   const model: DiscoveredModelInfo = { name: entry.name };
   if (entry.family !== undefined) model.family = Model.Family.make(entry.family);
   if (entry.limit) model.limit = { ...entry.limit };
@@ -13,8 +14,12 @@ export function modelInfoDraft(entry: OpenCodeModelEntry): DiscoveredModelInfo {
     }
   }
   if (entry.tool_call !== undefined) model.capabilities = { tools: entry.tool_call };
-  if (entry.modalities) {
-    model.capabilities = { ...model.capabilities, input: [...entry.modalities.input], output: [...entry.modalities.output] };
+  // Legacy modality arrays are complete; metadata preserves which directions were reported.
+  const modalities = info ? modelModalityDraft(info) : entry.modalities;
+  for (const direction of ["input", "output"] as const) {
+    if (modalities?.[direction] !== undefined) {
+      model.capabilities = { ...model.capabilities, [direction]: [...modalities[direction]] };
+    }
   }
   if (entry.reasoning === true || entry.interleaved) {
     model.compatibility = { reasoningField: "reasoning_content" };

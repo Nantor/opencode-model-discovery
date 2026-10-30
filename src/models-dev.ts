@@ -2,8 +2,10 @@ import { Models } from "@opencode-ai/models";
 import { Model } from "@opencode/plugin";
 
 import { loadModelsDevSnapshot } from "./models-dev-snapshot.ts";
+import { modelModalityDraft } from "./provider.js";
 import type {
   Logger,
+  LiteLLMModelInfo,
   ModelsDevData,
   ModelsDevModel,
   DiscoveredModelInfo,
@@ -90,14 +92,16 @@ export function findModelsDevEntry(
 
 /**
  * Fill gaps in a Model.Info-shaped discovery draft using models.dev metadata. Fields
- * already populated from LiteLLM discovery are left untouched; only fields
- * that are still `undefined` are set. Pricing is never read from the catalog.
+ * already populated from LiteLLM discovery are left untouched; only unreported
+ * fields or individual modalities are filled. Pricing is never read from the catalog.
  * reasoningReported prevents catalog inference when LiteLLM explicitly reports false.
+ * modalityInfo preserves per-modality true/false flags in otherwise partial lists.
  */
 export function enhanceModelInfo(
   modelEntry: DiscoveredModelInfo,
   modelsDevEntry: ModelsDevModel,
   reasoningReported = false,
+  modalityInfo: LiteLLMModelInfo = {},
 ): void {
   if (modelEntry.family === undefined && typeof modelsDevEntry.family === "string") {
     modelEntry.family = Model.Family.make(modelsDevEntry.family);
@@ -114,9 +118,12 @@ export function enhanceModelInfo(
       modelEntry.limit = { ...modelEntry.limit, [field]: value };
     }
   }
+  // A reported flag constrains only that modality, not the entire direction.
+  // Catalog capabilities fill the rest, with explicit true/false taking precedence.
+  const reportedModalities = modelModalityDraft(modalityInfo, modelsDevEntry.modalities);
   for (const field of ["input", "output"] as const) {
-    const value = modelsDevEntry.modalities?.[field];
-    if (modelEntry.capabilities?.[field] === undefined && Array.isArray(value)) {
+    const value = reportedModalities[field] ?? modelEntry.capabilities?.[field] ?? modelsDevEntry.modalities?.[field];
+    if (Array.isArray(value)) {
       modelEntry.capabilities = { ...modelEntry.capabilities, [field]: [...value] };
     }
   }

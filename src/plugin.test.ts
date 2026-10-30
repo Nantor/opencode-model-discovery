@@ -863,6 +863,76 @@ describe("applyDiscovery", () => {
 describe("ModelDiscoveryPlugin", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it.each([false, true])("preserves per-modality flags through discovery, enrichment and defaults (catalog: %s)", async (enhanceFromModelsDev) => {
+    const entries = [
+      { model_name: "text-only", litellm_params: {}, model_info: {
+        supports_vision: false, supports_audio_input: false, supports_pdf_input: false, supports_audio_output: false,
+      } },
+      { model_name: "non-vision", litellm_params: {}, model_info: { supports_vision: false } },
+      { model_name: "vision-only-reported", litellm_params: {}, model_info: { supports_vision: true } },
+      { model_name: "mixed", litellm_params: {}, model_info: { supports_vision: false, supports_audio_input: true, supports_audio_output: false } },
+      { model_name: "output-only-reported", litellm_params: {}, model_info: { supports_audio_output: true } },
+      { model_name: "unreported", litellm_params: {}, model_info: {} },
+    ];
+    const catalogModalities = { input: ["text", "image", "audio", "pdf"], output: ["text", "audio"] };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://models.dev/models.json") {
+        return Response.json(Object.fromEntries(entries.map(({ model_name: id }) => [id, {
+          id, name: id, description: "Test model", modalities: catalogModalities,
+        }])));
+      }
+      return Response.json({ data: url.includes("/models")
+        ? entries.map(({ model_name: id }) => ({ id })) : entries });
+    }));
+    let transform: Parameters<Context["model"]["transform"]>[0] | undefined;
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const settings = {
+      baseURL: "https://llm.example.com/v1",
+      "opencode-model-discovery": { discovery: true, enhanceFromModelsDev },
+    };
+    const providerRecord = {
+      provider: { id: "gateway", name: "Gateway", settings },
+      models: new Map(),
+    };
+    await ModelDiscoveryPlugin({
+      provider: { transform: vi.fn() },
+      model: { transform: vi.fn(async (cb) => { transform = cb; }), reload },
+      storage: createMemoryStorage(),
+    } as unknown as Context);
+    const updated = new Map<string, Record<string, unknown>>();
+    const editor = {
+      provider: { list: () => [providerRecord], get: () => providerRecord },
+      update: (_providerID: string, id: string, cb: (draft: Record<string, unknown>) => void) => {
+        const draft = { id };
+        cb(draft);
+        updated.set(id, draft);
+      },
+    };
+    transform?.(editor as never);
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    transform?.(editor as never);
+
+    const expected = {
+      "text-only": { input: ["text"], output: ["text"] },
+      "non-vision": { input: enhanceFromModelsDev ? ["text", "audio", "pdf"] : ["text"], output: enhanceFromModelsDev ? ["text", "audio"] : ["text"] },
+      "vision-only-reported": enhanceFromModelsDev ? catalogModalities : { input: ["text", "image"], output: ["text"] },
+      mixed: { input: enhanceFromModelsDev ? ["text", "audio", "pdf"] : ["text", "audio"], output: ["text"] },
+      "output-only-reported": { input: enhanceFromModelsDev ? catalogModalities.input : ["text", "image"], output: ["text", "audio"] },
+      unreported: enhanceFromModelsDev ? catalogModalities : { input: ["text", "image"], output: ["text"] },
+    };
+    for (const [id, modalities] of Object.entries(expected)) {
+      expect(updated.get(id)?.capabilities, id).toEqual({ tools: true, ...modalities });
+    }
+
+    // The public config-style bridge must also preserve explicit negatives.
+    const config: OpenCodeConfig = { provider: { gateway: { options: settings } } };
+    await applyDiscovery(config);
+    expect(providerFor(config, "gateway").models?.["text-only"]?.modalities).toEqual(expected["text-only"]);
+    expect(providerFor(config, "gateway").models?.["text-only"]?.attachment).toBe(false);
+    expect(providerFor(config, "gateway").models?.["non-vision"]?.modalities).toEqual(expected["non-vision"]);
+  });
+
   it.each([false, true])("preserves partial LiteLLM limits through runtime defaults (catalog: %s)", async (enhanceFromModelsDev) => {
     const entries = [
       { model_name: "output-only", litellm_params: {}, model_info: { max_output_tokens: "1024" } },

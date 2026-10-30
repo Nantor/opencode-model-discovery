@@ -1,8 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { modelInfoDraft, materializeModelInfo } from "./model.js";
 import { enhanceModelInfo } from "./models-dev.js";
+import { buildProviderConfig } from "./provider.js";
 
 describe("OpenCode model construction", () => {
+  it("keeps reported positives and negatives when the catalog omits those capabilities", () => {
+    const info = { supports_vision: true, supports_audio_input: false, supports_audio_output: true };
+    const entry = buildProviderConfig([
+      { model_name: "model", litellm_params: {}, model_info: info },
+    ], "https://gateway.example").models!.model;
+    const draft = modelInfoDraft(entry, info);
+    enhanceModelInfo(draft, {
+      id: "lab/model", name: "Model", description: "Test",
+      modalities: { input: ["text", "audio", "video"], output: ["text"] },
+    }, false, info);
+    const model = materializeModelInfo("gateway", "model", draft);
+    expect(model.capabilities).toEqual({ tools: true, input: ["text", "video", "image"], output: ["text", "audio"] });
+  });
+
+  it("keeps non-vision input text-only even when a matching catalog has no modalities", () => {
+    const info = { supports_vision: false };
+    const draft = modelInfoDraft({}, info);
+    enhanceModelInfo(draft, { id: "lab/model", name: "Model", description: "Test" }, false, info);
+    expect(materializeModelInfo("gateway", "model", draft).capabilities.input).toEqual(["text"]);
+  });
+
   it("maps discovery pricing to branded runtime costs and preserves context tiers", () => {
     const draft = modelInfoDraft({
       cost: {
