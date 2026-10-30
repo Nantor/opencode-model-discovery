@@ -1,4 +1,5 @@
 import type {
+  DiscoveredModelInfo,
   LiteLLMModelInfo,
   LiteLLMModelInfoEntry,
   LiteLLMParams,
@@ -17,6 +18,23 @@ import { toNum } from "./types.js";
 function toPerMillion(perToken: unknown): number | undefined {
   const value = toNum(perToken);
   return value === undefined ? undefined : value * 1_000_000;
+}
+
+/** Preserve independently reported limits before enrichment or runtime defaults. */
+export function modelLimitDraft(info: LiteLLMModelInfo): DiscoveredModelInfo["limit"] {
+  // LiteLLM's `max_tokens` is a legacy alias for `max_output_tokens`, not
+  // the context window. The context window is `max_input_tokens`; fall
+  // back to `max_tokens` only when LiteLLM did not report an input limit.
+  const inputTokens = toNum(info.max_input_tokens);
+  const outputTokens = toNum(info.max_output_tokens) ?? toNum(info.max_tokens);
+  const contextTokens = inputTokens ?? toNum(info.max_tokens);
+  if (contextTokens === undefined && outputTokens === undefined) return undefined;
+
+  return {
+    ...(contextTokens !== undefined ? { context: contextTokens } : {}),
+    ...(inputTokens !== undefined ? { input: inputTokens } : {}),
+    ...(outputTokens !== undefined ? { output: outputTokens } : {}),
+  };
 }
 
 export function buildProviderConfig(
@@ -59,22 +77,10 @@ export function buildProviderConfig(
 
     if (info) {
       // --- limit (context window / token counts) ---
-      // LiteLLM's `max_tokens` is a legacy alias for `max_output_tokens`, not
-      // the context window. The context window is `max_input_tokens`; fall
-      // back to `max_tokens` only when LiteLLM did not report an input limit.
-      const inputTokens = toNum(info.max_input_tokens);
-      const outputTokens = toNum(info.max_output_tokens) ?? toNum(info.max_tokens);
-      const contextTokens = inputTokens ?? toNum(info.max_tokens);
-
-      if (contextTokens !== undefined && outputTokens !== undefined) {
-        const limit: { context: number; output: number; input?: number } = {
-          context: contextTokens,
-          output: outputTokens,
-        };
-        if (inputTokens !== undefined) {
-          limit.input = inputTokens;
-        }
-        modelEntry.limit = limit;
+      const limit = modelLimitDraft(info);
+      // The legacy config requires a complete limit; V2 uses the partial draft directly.
+      if (limit?.context !== undefined && limit.output !== undefined) {
+        modelEntry.limit = { ...limit, context: limit.context, output: limit.output };
       }
 
       // --- cost (LiteLLM reports USD per token; OpenCode expects USD per 1M tokens) ---

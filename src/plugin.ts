@@ -18,7 +18,7 @@ import {
 } from "./fetch.js";
 import { enhanceModelInfo, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
 import { applyModelInfoDraft, materializeModelInfo, modelInfoDraft } from "./model.js";
-import { buildProviderConfig } from "./provider.js";
+import { buildProviderConfig, modelLimitDraft } from "./provider.js";
 import { errorMessage, fillMissingFields, safeLog } from "./utils.js";
 import type {
   LiteLLMModelInfoEntry,
@@ -265,6 +265,9 @@ export async function discoverProviderModels(
       if (!model) continue;
       const draft = modelInfoDraft(model);
       const info = entry.model_info;
+      // Read limits directly from metadata: the legacy bridge cannot represent partial limits.
+      const limit = modelLimitDraft(info);
+      if (limit) draft.limit = limit;
       // Preserve explicit negative capabilities; catalog data must not override them.
       if (info.supports_function_calling === false && info.supports_tool_choice !== true) {
         draft.capabilities = { ...draft.capabilities, tools: false };

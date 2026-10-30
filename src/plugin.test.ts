@@ -762,6 +762,34 @@ describe("applyDiscovery", () => {
     }
   });
 
+  it("preserves independently reported limits when catalog enrichment completes legacy limits", async () => {
+    const entries = [
+      { model_name: "output-only", litellm_params: {}, model_info: { max_output_tokens: 1024 } },
+      { model_name: "input-only", litellm_params: {}, model_info: { max_input_tokens: "8192" } },
+    ];
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://models.dev/models.json") {
+        return Response.json(Object.fromEntries(entries.map(({ model_name: id }) => [id, {
+          id, name: id, description: "Test model",
+          limit: { context: 128000, input: 120000, output: 16384 },
+        }])));
+      }
+      return Response.json({ data: url.includes("/models")
+        ? entries.map(({ model_name: id }) => ({ id })) : entries });
+    });
+    const config: OpenCodeConfig = { provider: { gateway: { options: {
+      baseURL: "https://llm.example.com/v1",
+      "opencode-model-discovery": { discovery: true, enhanceFromModelsDev: true },
+    } } } };
+
+    await applyDiscovery(config);
+
+    const models = providerFor(config, "gateway").models;
+    expect(models?.["output-only"].limit).toEqual({ context: 128000, input: 120000, output: 1024 });
+    expect(models?.["input-only"].limit).toEqual({ context: 8192, input: 8192, output: 16384 });
+  });
+
   it("enhances discovery from the bundled snapshot when models.dev is unavailable", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -829,6 +857,62 @@ describe("applyDiscovery", () => {
 
 describe("ModelDiscoveryPlugin", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it.each([false, true])("preserves partial LiteLLM limits through runtime defaults (catalog: %s)", async (enhanceFromModelsDev) => {
+    const entries = [
+      { model_name: "output-only", litellm_params: {}, model_info: { max_output_tokens: "1024" } },
+      { model_name: "input-only", litellm_params: {}, model_info: { max_input_tokens: 8192 } },
+      { model_name: "zero-output", litellm_params: {}, model_info: { max_output_tokens: 0 } },
+      { model_name: "missing-limits", litellm_params: {}, model_info: {} },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://models.dev/models.json") {
+        return Response.json(Object.fromEntries(entries.map(({ model_name: id }) => [id, {
+          id, name: id, description: "Test model",
+          limit: { context: 128000, input: 120000, output: 16384 },
+        }])));
+      }
+      return Response.json({ data: url.includes("/models")
+        ? entries.map(({ model_name: id }) => ({ id })) : entries });
+    }));
+    let transform: Parameters<Context["model"]["transform"]>[0] | undefined;
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const providerRecord = {
+      provider: { id: "gateway", name: "Gateway", settings: {
+        baseURL: "https://llm.example.com/v1",
+        "opencode-model-discovery": { discovery: true, enhanceFromModelsDev },
+      } },
+      models: new Map(),
+    };
+    const ctx = {
+      provider: { transform: vi.fn() },
+      model: { transform: vi.fn(async (cb) => { transform = cb; }), reload },
+      storage: createMemoryStorage(),
+    } as unknown as Context;
+    await ModelDiscoveryPlugin(ctx);
+
+    const updated = new Map<string, Record<string, unknown>>();
+    const editor = {
+      provider: { list: () => [providerRecord], get: () => providerRecord },
+      update: (_providerID: string, id: string, cb: (draft: Record<string, unknown>) => void) => {
+        const draft = { id };
+        cb(draft);
+        updated.set(id, draft);
+      },
+    };
+    transform?.(editor as never);
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    transform?.(editor as never);
+
+    const fallback = enhanceFromModelsDev
+      ? { context: 128000, input: 120000, output: 16384 }
+      : { context: 200000, output: 32000 };
+    expect(updated.get("output-only")?.limit).toEqual({ ...fallback, output: 1024 });
+    expect(updated.get("input-only")?.limit).toEqual({ ...fallback, context: 8192, input: 8192 });
+    expect(updated.get("zero-output")?.limit).toEqual({ ...fallback, output: 0 });
+    expect(updated.get("missing-limits")?.limit).toEqual(fallback);
+  });
 
   it.each([true, false, undefined])("preserves raw overrides while enriching existing runtime models (%s)", async (enrichExistingModels) => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
