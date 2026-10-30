@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 
 import type { Context } from "@opencode/plugin/promise/plugin";
-import { discoveryHeaders } from "./fetch.js";
-import { toNum, type LiteLLMModel, type LiteLLMModelInfoEntry } from "./types.js";
+import { discoveryHeaders, sanitizeModelInfoFields } from "./fetch.js";
+import type { LiteLLMModel, LiteLLMModelInfoEntry } from "./types.js";
 
 export type Storage = Context["storage"];
 
@@ -103,35 +103,12 @@ export function cacheModel(model: LiteLLMModel): LiteLLMModel {
 
 /** Allowlist discovery metadata; never copy arbitrary upstream response objects. */
 export function cacheModelInfo(entry: LiteLLMModelInfoEntry): LiteLLMModelInfoEntry {
-  const result: LiteLLMModelInfoEntry = { model_name: entry.model_name, litellm_params: {}, model_info: {} };
-  const params = entry.litellm_params;
-  if (typeof params.model === "string") result.litellm_params.model = params.model;
-  if (typeof params.merge_reasoning_content_in_choices === "boolean") {
-    result.litellm_params.merge_reasoning_content_in_choices = params.merge_reasoning_content_in_choices;
-  }
-  const info = entry.model_info;
-  if (typeof info.mode === "string") result.model_info.mode = info.mode;
-  if (Array.isArray(info.supported_openai_params)) {
+  const result = sanitizeModelInfoFields(entry);
+  if (result.model_info.supported_openai_params) {
     // Only these two parameters affect compatibility; don't retain arbitrary strings.
-    result.model_info.supported_openai_params = info.supported_openai_params.filter(
+    result.model_info.supported_openai_params = result.model_info.supported_openai_params.filter(
       (param) => param === "max_tokens" || param === "max_completion_tokens",
     );
-  }
-  for (const field of [
-    "max_tokens", "max_input_tokens", "max_output_tokens",
-    "input_cost_per_token", "output_cost_per_token",
-    "cache_read_input_token_cost", "cache_creation_input_token_cost",
-    "input_cost_per_token_above_200k_tokens", "output_cost_per_token_above_200k_tokens",
-    "cache_read_input_token_cost_above_200k_tokens", "cache_creation_input_token_cost_above_200k_tokens",
-  ] as const) {
-    const value = toNum(info[field]);
-    if (value !== undefined) result.model_info[field] = value;
-  }
-  for (const field of [
-    "supports_reasoning", "reasoning", "supports_function_calling", "supports_tool_choice",
-    "supports_vision", "supports_audio_input", "supports_audio_output", "supports_pdf_input",
-  ] as const) {
-    if (typeof info[field] === "boolean") result.model_info[field] = info[field];
   }
   return result;
 }

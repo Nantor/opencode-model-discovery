@@ -1,34 +1,59 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { fetchModelInfo, fetchModels, isLiteLLMModelInfoEntry } from "./fetch.js";
+import { fetchModelInfo, fetchModels, sanitizeLiteLLMModelInfoEntry } from "./fetch.js";
 
-describe("isLiteLLMModelInfoEntry", () => {
+describe("sanitizeLiteLLMModelInfoEntry", () => {
   it.each([
     null,
     [],
     { model_name: 42, litellm_params: {}, model_info: {} },
     { model_name: "bad", litellm_params: [], model_info: {} },
     { model_name: "bad", litellm_params: {}, model_info: [] },
-    ...[null, 42, {}, ["chat"]].map((mode) => ({
-      model_name: "bad", litellm_params: {}, model_info: { mode },
-    })),
-    ...[null, 42, {}, "max_completion_tokens", ["max_tokens", {}]].map((supported_openai_params) => ({
-      model_name: "bad", litellm_params: {}, model_info: { supported_openai_params },
-    })),
-    ...[null, 42, {}, ["upstream"]].map((model) => ({
-      model_name: "bad", litellm_params: { model }, model_info: {},
-    })),
+    { model_name: "bad", litellm_params: null, model_info: {} },
+    { model_name: "bad", litellm_params: {}, model_info: null },
   ])("rejects unusable metadata: %j", (entry) => {
-    expect(isLiteLLMModelInfoEntry(entry)).toBe(false);
+    expect(sanitizeLiteLLMModelInfoEntry(entry)).toBeUndefined();
   });
 
   it("accepts absent optional fields and valid metadata", () => {
-    expect(isLiteLLMModelInfoEntry({ model_name: "basic", litellm_params: {}, model_info: {} })).toBe(true);
-    expect(isLiteLLMModelInfoEntry({
+    const basic = { model_name: "basic", litellm_params: {}, model_info: {} };
+    expect(sanitizeLiteLLMModelInfoEntry(basic)).toEqual(basic);
+    const chat = {
       model_name: "chat",
       litellm_params: { model: "upstream" },
       model_info: { mode: "CHAT", supported_openai_params: ["max_tokens", "max_completion_tokens"] },
-    })).toBe(true);
+    };
+    expect(sanitizeLiteLLMModelInfoEntry(chat)).toEqual(chat);
+  });
+
+  it.each([null, 42, {}, ["chat"]])("drops invalid mode and alias independently: %j", (invalid) => {
+    const entry = {
+      model_name: "public",
+      litellm_params: { model: invalid, merge_reasoning_content_in_choices: false },
+      model_info: {
+        mode: invalid, max_input_tokens: "8192", max_output_tokens: 1024,
+        supports_vision: false, supported_openai_params: ["max_tokens", {}, null],
+      },
+    };
+    const before = structuredClone(entry);
+    expect(sanitizeLiteLLMModelInfoEntry(entry)).toEqual({
+      model_name: "public",
+      litellm_params: { merge_reasoning_content_in_choices: false },
+      model_info: {
+        max_input_tokens: 8192, max_output_tokens: 1024,
+        supports_vision: false, supported_openai_params: ["max_tokens"],
+      },
+    });
+    expect(entry).toEqual(before);
+  });
+
+  it.each([null, 42, {}, "max_completion_tokens"])("retains exclusions and aliases with invalid params: %j", (invalid) => {
+    expect(sanitizeLiteLLMModelInfoEntry({
+      model_name: "public", litellm_params: { model: "upstream" },
+      model_info: { mode: "embedding", supported_openai_params: invalid },
+    })).toEqual({
+      model_name: "public", litellm_params: { model: "upstream" }, model_info: { mode: "embedding" },
+    });
   });
 });
 
@@ -132,7 +157,7 @@ describe("fetchModelInfo", () => {
     expect(new Headers(mockFetch.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer sk-secret");
   });
 
-  it("returns the data array from the response", async () => {
+  it("returns sanitized discovery metadata from the response", async () => {
     const mockFetch = vi.mocked(fetch);
     const entries = [{ model_name: "gpt-4o", litellm_params: { model: "gpt-4o" }, model_info: { max_tokens: 128000, max_input_tokens: 127000, max_output_tokens: 100000, input_cost_per_token: 0.000003, output_cost_per_token: 0.000015, supports_vision: true, supports_function_calling: true, mode: "chat", litellm_provider: "openai" } }];
     mockFetch.mockResolvedValue({
@@ -141,7 +166,8 @@ describe("fetchModelInfo", () => {
     } as unknown as Response);
 
     const result = await fetchModelInfo("http://localhost:4000");
-    expect(result).toEqual(entries);
+    const { litellm_provider: _provider, ...model_info } = entries[0].model_info;
+    expect(result).toEqual([{ ...entries[0], model_info }]);
   });
 
   it("throws on non-OK HTTP status", async () => {

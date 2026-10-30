@@ -6,7 +6,6 @@ import {
   cacheModel,
   cacheModelInfo,
   discoveryCacheKey,
-  isArrayOf,
   parseCacheDuration,
   readCache,
   type Storage,
@@ -17,7 +16,7 @@ import {
   fetchModelInfo,
   fetchModels,
   isLiteLLMModel,
-  isLiteLLMModelInfoEntry,
+  sanitizeLiteLLMModelInfoEntry,
 } from "./fetch.js";
 import { enhanceModelInfo, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
 import { applyModelInfoDraft, modelInfoDraft, sourceModelOverrides } from "./model.js";
@@ -62,19 +61,18 @@ async function readOrFetchCache<T>(
   key: string,
   cacheDurationMs: number | undefined,
   fetch: () => Promise<T[]>,
-  isItem: (value: unknown) => value is T,
+  parseItem: (value: unknown) => T | undefined,
   project: (value: T) => T,
   allowPartialCache = false,
   signal?: AbortSignal,
 ): Promise<T[]> {
   signal?.throwIfAborted();
   if (!storage || cacheDurationMs === undefined) return fetch();
-  const isCachedValue = allowPartialCache
-    ? (value: unknown): value is unknown[] => Array.isArray(value)
-    : isArrayOf(isItem);
+  const isCachedValue = (value: unknown): value is unknown[] =>
+    Array.isArray(value) && (allowPartialCache || value.every((item: unknown) => parseItem(item) !== undefined));
   const cached = await readCache(storage, key, cacheDurationMs, isCachedValue);
   signal?.throwIfAborted();
-  if (cached !== undefined) return cached.filter(isItem).map(project);
+  if (cached !== undefined) return cached.map(parseItem).filter((item) => item !== undefined).map(project);
   const fresh = await fetch();
   signal?.throwIfAborted();
   await writeCache(storage, key, fresh.map(project));
@@ -233,7 +231,7 @@ export async function discoverProviderModels(
       modelsCacheKey,
       cacheDurationMs,
       () => fetchModels(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal, headers),
-      isLiteLLMModel,
+      (value) => isLiteLLMModel(value) ? value : undefined,
       cacheModel,
       false,
       lifecycle?.signal,
@@ -245,7 +243,7 @@ export async function discoverProviderModels(
         infoCacheKey,
         cacheDurationMs,
         () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal, headers),
-        isLiteLLMModelInfoEntry,
+        sanitizeLiteLLMModelInfoEntry,
         cacheModelInfo,
         // Caches can contain malformed entries. Keep usable metadata even
         // when refetching the optional endpoint would fail.

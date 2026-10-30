@@ -402,7 +402,7 @@ describe("applyDiscovery", () => {
     expect(providerFor(config, "gateway").models?.["model-a"]?.name).toBe("Model A");
   });
 
-  it.each(["HTTP", "cache"])("preserves good models and basic discovery with malformed %s metadata", async (source) => {
+  it.each(["HTTP", "HTTP without storage", "cache"])("preserves good models and basic discovery with malformed %s metadata", async (source) => {
     const baseURL = "https://metadata-test.example.com/v1";
     const storage = createMemoryStorage();
     const malformed = [
@@ -434,6 +434,19 @@ describe("applyDiscovery", () => {
       },
       { model_name: "wildcard*", litellm_params: {}, model_info: { supports_function_calling: true } },
       { model_name: "embedding", litellm_params: {}, model_info: { mode: "embedding" } },
+      ...[null, 42, {}, "max_completion_tokens", ["max_tokens", {}]].map((supported_openai_params, index) => ({
+        model_name: `excluded-${index}`,
+        litellm_params: { model: `excluded-upstream-${index}` },
+        model_info: { mode: "embedding", supported_openai_params, max_input_tokens: 8192, max_output_tokens: 1024 },
+      })),
+      {
+        model_name: "null-mode", litellm_params: { model: "null-mode-upstream" },
+        model_info: { mode: null, max_input_tokens: 8192, max_output_tokens: 1024, supports_vision: false },
+      },
+      ...[null, 42, {}, ["good"]].map((model, index) => ({
+        model_name: `invalid-alias-${index}`, litellm_params: { model },
+        model_info: { max_input_tokens: 4096, max_output_tokens: 512, supports_function_calling: true },
+      })),
       {
         model_name: "bad-scalars", litellm_params: { merge_reasoning_content_in_choices: {} },
         model_info: {
@@ -443,7 +456,11 @@ describe("applyDiscovery", () => {
       },
     ];
     const models = [...malformed.map((entry) => ({ id: entry.model_name })),
-      { id: "upstream-good" }, { id: "basic-only" }, { id: "embedding" }, { id: "bad-scalars" }];
+      { id: "upstream-good" }, { id: "basic-only" }, { id: "embedding" }, { id: "bad-scalars" },
+      { id: "null-mode-upstream" },
+      ...Array.from({ length: 5 }, (_, index) => ({ id: index === 0 ? "excluded-0" : `excluded-upstream-${index}` })),
+      ...Array.from({ length: 4 }, (_, index) => ({ id: `invalid-alias-${index}` })),
+    ];
     if (source === "cache") {
       // Seed the raw shape accepted by older releases, including bad entries.
       await writeCache(storage, discoveryCacheKey("models", baseURL), models);
@@ -462,16 +479,25 @@ describe("applyDiscovery", () => {
     };
     const log = vi.fn();
 
-    await applyDiscovery(config, log, storage);
+    await applyDiscovery(config, log, source === "HTTP without storage" ? undefined : storage);
 
     const provider = providerFor(config, "gateway");
     expect(Object.keys(provider.models ?? {}).sort()).toEqual([
       ...malformed.map((entry) => entry.model_name), "good", "wildcard*", "basic-only", "bad-scalars",
+      "null-mode", ...Array.from({ length: 4 }, (_, index) => `invalid-alias-${index}`),
     ].sort());
     expect(provider.models?.good).toMatchObject({
       limit: { context: 8192, input: 8192, output: 1024 }, attachment: false,
     });
     expect(provider.models?.["wildcard*"]?.tool_call).toBe(true);
+    expect(provider.models?.["null-mode"]).toMatchObject({
+      limit: { context: 8192, input: 8192, output: 1024 }, attachment: false,
+    });
+    for (let index = 0; index < 4; index++) {
+      expect(provider.models?.[`invalid-alias-${index}`]).toMatchObject({
+        limit: { context: 4096, input: 4096, output: 512 }, tool_call: true,
+      });
+    }
     for (const entry of malformed) {
       expect(provider.models?.[entry.model_name]).toEqual({ name: expect.any(String) });
     }
@@ -479,6 +505,7 @@ describe("applyDiscovery", () => {
     const transform = provider.options?.transformRequestBody as (body: Record<string, unknown>) => Record<string, unknown>;
     expect(transform({ model: "good", max_tokens: 100 })).toEqual({ model: "good", max_completion_tokens: 100 });
     expect(transform({ model: "bad-2", max_tokens: 100 })).toEqual({ model: "bad-2", max_tokens: 100 });
+    expect(transform({ model: "bad-3", max_tokens: 100 })).toEqual({ model: "bad-3", max_completion_tokens: 100 });
     expect(log).not.toHaveBeenCalledWith("error", expect.any(String));
     expect(fetch).toHaveBeenCalledTimes(source === "cache" ? 0 : 2);
   });

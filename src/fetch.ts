@@ -1,9 +1,9 @@
 import type {
   LiteLLMModel,
   LiteLLMModelInfoEntry,
-  LiteLLMModelInfoResponse,
   LiteLLMModelsResponse,
 } from "./types.js";
+import { toNum } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Fetch
@@ -74,25 +74,55 @@ export function isLiteLLMModel(value: unknown): value is LiteLLMModel {
   );
 }
 
-export function isLiteLLMModelInfoEntry(value: unknown): value is LiteLLMModelInfoEntry {
-  if (!isRecord(value)) return false;
+/** Validate the record shape, then independently retain usable discovery fields. */
+export function sanitizeLiteLLMModelInfoEntry(value: unknown): LiteLLMModelInfoEntry | undefined {
+  if (!isRecord(value)) return undefined;
   const { model_name, litellm_params, model_info } = value;
   if (
     typeof model_name !== "string" ||
     !isRecord(litellm_params) ||
     !isRecord(model_info)
-  ) return false;
+  ) return undefined;
 
-  // These optional fields drive string/array operations downstream. Reject only
-  // the affected metadata entry; /v1/models still supplies its basic model.
-  // Numeric values and capability flags are checked by their mapping helpers.
-  return (
-    (litellm_params.model === undefined || typeof litellm_params.model === "string") &&
-    (model_info.mode === undefined || typeof model_info.mode === "string") &&
-    (model_info.supported_openai_params === undefined ||
-      (Array.isArray(model_info.supported_openai_params) &&
-        model_info.supported_openai_params.every((param: unknown) => typeof param === "string")))
-  );
+  return sanitizeModelInfoFields({ model_name, litellm_params, model_info });
+}
+
+/** Construct typed metadata without asserting that unchecked optional fields are valid. */
+export function sanitizeModelInfoFields(entry: {
+  model_name: string;
+  litellm_params: Record<string, unknown>;
+  model_info: Record<string, unknown>;
+}): LiteLLMModelInfoEntry {
+  const result: LiteLLMModelInfoEntry = { model_name: entry.model_name, litellm_params: {}, model_info: {} };
+  const params = entry.litellm_params;
+  if (typeof params.model === "string") result.litellm_params.model = params.model;
+  if (typeof params.merge_reasoning_content_in_choices === "boolean") {
+    result.litellm_params.merge_reasoning_content_in_choices = params.merge_reasoning_content_in_choices;
+  }
+  const info = entry.model_info;
+  if (typeof info.mode === "string") result.model_info.mode = info.mode;
+  if (Array.isArray(info.supported_openai_params)) {
+    result.model_info.supported_openai_params = info.supported_openai_params.filter(
+      (param: unknown): param is string => typeof param === "string",
+    );
+  }
+  for (const field of [
+    "max_tokens", "max_input_tokens", "max_output_tokens",
+    "input_cost_per_token", "output_cost_per_token",
+    "cache_read_input_token_cost", "cache_creation_input_token_cost",
+    "input_cost_per_token_above_200k_tokens", "output_cost_per_token_above_200k_tokens",
+    "cache_read_input_token_cost_above_200k_tokens", "cache_creation_input_token_cost_above_200k_tokens",
+  ] as const) {
+    const value = toNum(info[field]);
+    if (value !== undefined) result.model_info[field] = value;
+  }
+  for (const field of [
+    "supports_reasoning", "reasoning", "supports_function_calling", "supports_tool_choice",
+    "supports_vision", "supports_audio_input", "supports_audio_output", "supports_pdf_input",
+  ] as const) {
+    if (typeof info[field] === "boolean") result.model_info[field] = info[field];
+  }
+  return result;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -126,7 +156,7 @@ export async function fetchModels(
 
 /**
  * Fetch model info from GET /v2/model/info?return_wildcard_routes=true.
- * Returns entries containing `model_info` details (max_tokens, costs, feature flags, etc.)
+ * Returns sanitized discovery details (max_tokens, costs, feature flags, etc.)
  */
 export async function fetchModelInfo(
   baseURL: string,
@@ -136,7 +166,7 @@ export async function fetchModelInfo(
   headers?: Readonly<Record<string, string>>,
 ): Promise<LiteLLMModelInfoEntry[]> {
   const url = normalizeBaseURL(baseURL);
-  const json = await fetchEndpoint<LiteLLMModelInfoResponse>(
+  const json = await fetchEndpoint<unknown>(
     url,
     "/v2/model/info?return_wildcard_routes=true",
     apiKey,
@@ -145,9 +175,9 @@ export async function fetchModelInfo(
     headers,
   );
 
-  if (!Array.isArray(json.data)) {
+  if (!isRecord(json) || !Array.isArray(json.data)) {
     throw new Error(`Unexpected response from ${url}/v2/model/info: missing data array`);
   }
 
-  return json.data.filter(isLiteLLMModelInfoEntry);
+  return json.data.map(sanitizeLiteLLMModelInfoEntry).filter((entry) => entry !== undefined);
 }
