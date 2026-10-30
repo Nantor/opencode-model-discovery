@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
-import type { ModelsDevData, OpenCodeDiscoveryOptions } from "../src/types.js";
+import type { ModelsDevData, ModelsDevModel, OpenCodeDiscoveryOptions } from "../src/types.js";
 import { discoveryTimeout, normalizeBaseURL } from "../src/fetch.ts";
 import { findModelsDevEntry, getModelsDevData } from "../src/models-dev.ts";
 
@@ -141,6 +141,21 @@ function csvValue(value: string): string {
   return `"${value.replaceAll("\"", "\"\"")}"`;
 }
 
+/** All known model IDs across discovery, config, and runtime sources. */
+function allModelIDs(
+  models: unknown,
+  modelInfo: unknown,
+  config: DebugConfig,
+  providerID: string,
+  runtimeConfig?: DebugConfig,
+): Set<string> {
+  const fromModels = modelIDs(models, "id");
+  const fromModelInfo = modelIDs(modelInfo, "model_name");
+  const configModels = new Set(Object.keys(config.providers?.[providerID]?.models ?? {}));
+  const runtimeModels = new Set(Object.keys(runtimeConfig?.providers?.[providerID]?.models ?? {}));
+  return new Set([...fromModels, ...fromModelInfo, ...configModels, ...runtimeModels]);
+}
+
 export function modelSummaryCSV(
   models: unknown,
   modelInfo: unknown,
@@ -155,8 +170,7 @@ export function modelSummaryCSV(
   const configModelEntries = config.providers?.[providerID]?.models ?? {};
   const configModels = new Set(Object.keys(configModelEntries));
   const runtimeModels = new Set(Object.keys(runtimeConfig?.providers?.[providerID]?.models ?? {}));
-  const allModelIDs = new Set([...fromModels, ...fromModelInfo, ...configModels, ...runtimeModels]);
-  const rows = [...allModelIDs]
+  const rows = [...allModelIDs(models, modelInfo, config, providerID, runtimeConfig)]
     .sort((left, right) => left.localeCompare(right))
     .map((modelID) => [
       csvValue(modelID),
@@ -176,6 +190,26 @@ export function modelSummaryCSV(
     (runtimeConfig ? ",runtime" : "") +
     (modelsDevData ? ",models_dev" : "");
   return [header, ...rows].join("\n") + "\n";
+}
+
+/** Preserve full catalog entries under the original provider model IDs. */
+export function modelsDevByModel(
+  models: unknown,
+  modelInfo: unknown,
+  config: DebugConfig,
+  providerID: string,
+  runtimeConfig?: DebugConfig,
+  modelsDevData?: ModelsDevData,
+): Record<string, ModelsDevModel | Record<string, never>> {
+  const discoveryOptions = config.providers?.[providerID]?.settings?.["opencode-model-discovery"];
+  return Object.fromEntries(
+    [...allModelIDs(models, modelInfo, config, providerID, runtimeConfig)]
+      .sort((left, right) => left.localeCompare(right))
+      .map((modelID) => [
+        modelID,
+        (modelsDevData ? findModelsDevEntry(modelsDevData, modelID, discoveryOptions) : undefined) ?? {},
+      ]),
+  );
 }
 
 export function providerSettings(providerID: string, config: DebugConfig): ProviderSettings {
@@ -260,6 +294,7 @@ async function main(): Promise<void> {
   const configOutputPath = `${prefix}.opencode-config.json`;
   const runtimeOutputPath = `${prefix}.opencode-runtime.json`;
   const summaryPath = `${prefix}.models.csv`;
+  const modelsDevPath = `${prefix}.models-dev.json`;
   await writeJSON(configOutputPath, resolvedConfig);
   let runtimeConfig: DebugConfig | undefined;
   try {
@@ -274,6 +309,10 @@ async function main(): Promise<void> {
     await writeJSON(runtimeOutputPath, { error: "Runtime inventory unavailable" });
   }
   const modelsDevData = await getModelsDevData((level, message) => console[level](message));
+  await writeJSON(
+    modelsDevPath,
+    modelsDevByModel(models, modelInfo, resolvedConfig, providerID, runtimeConfig, modelsDevData),
+  );
   await writeFile(
     summaryPath,
     modelSummaryCSV(models, modelInfo, resolvedConfig, providerID, runtimeConfig, modelsDevData),
@@ -285,6 +324,7 @@ async function main(): Promise<void> {
   console.log(`  ${configOutputPath}`);
   console.log(`  ${runtimeOutputPath}`);
   console.log(`  ${summaryPath}`);
+  console.log(`  ${modelsDevPath}`);
   if (modelInfoError) console.log("CSV model_info=false indicates unavailable detailed info, not confirmed absence.");
   console.log("Runtime models are a current snapshot; initial plugin discovery may still be pending. Rerun after discovery completes if models are missing.");
 }

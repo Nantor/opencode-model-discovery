@@ -120,6 +120,8 @@ For the compiled runtime view, the debug script separately queries `opencode api
 
 The debug script uses the plugin's URL normalization and timeout validation. If optional `/v2/model/info` fails, it warns and saves an error object in `.model-info.json` while retaining the model list, configuration, and CSV. In this case, `model_info=false` means detailed info was unavailable, not confirmed model absence. If runtime inspection fails, it saves an error marker in `.opencode-runtime.json` and writes the CSV without a `runtime` column. The runtime output otherwise preserves enriched capabilities, reasoning compatibility, and cost tiers as returned by OpenCode, including metadata from the catalog snapshot fallback.
 
+The script also writes `debug/<provider-id>.models-dev.json`, keyed by each model ID appearing in discovery, configuration, or runtime inventory (the same set as the CSV). Each value is the complete matching models.dev metadata entry, using the configured prefix/postfix matching rules, or `{}` when no match or catalog data is available.
+
 ## Model Names
 
 Model IDs are normalized into display names. For example, `openai/gpt-4o-mini` becomes `Gpt 4o Mini`.
