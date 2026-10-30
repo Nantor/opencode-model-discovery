@@ -53,7 +53,8 @@ export async function readCache<T>(
       return undefined;
     }
     if (Date.now() - entry.createdAt > durationMs) {
-      void storage.remove(key).catch(() => undefined);
+      // Finish eviction before a cache miss lets the caller write a replacement.
+      await storage.remove(key);
       return undefined;
     }
     if (!isValid(entry.value)) {

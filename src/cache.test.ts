@@ -151,6 +151,64 @@ describe("readCache / writeCache with storage", () => {
     await expect(storage.get("key")).resolves.toBeUndefined();
   });
 
+  it("finishes delayed expiration removal before fetching and caching a replacement", async () => {
+    const backing = createMemoryStorage();
+    await backing.set("key", { createdAt: Date.now() - 120_000, value: [1] } as never);
+    const removalStarted = Promise.withResolvers<void>();
+    const releaseRemoval = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const storage: Storage = {
+      ...backing,
+      async remove(key) {
+        events.push("remove:start");
+        removalStarted.resolve();
+        await releaseRemoval.promise;
+        await backing.remove(key);
+        events.push("remove:end");
+      },
+      async set(key, value) {
+        events.push("set");
+        await backing.set(key, value);
+      },
+    };
+    const fetchFresh = async (): Promise<number[]> => {
+      events.push("fetch");
+      return [2];
+    };
+    const refresh = async (): Promise<void> => {
+      const cached = await readCache(storage, "key", 60_000, isNumberArray);
+      if (cached === undefined) {
+        await writeCache(storage, "key", await fetchFresh());
+      }
+    };
+
+    const pending = refresh();
+    await removalStarted.promise;
+    releaseRemoval.resolve();
+    await pending;
+
+    expect(events).toEqual(["remove:start", "remove:end", "fetch", "set"]);
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toEqual([2]);
+  });
+
+  it("treats rejected expiration removal as a miss and allows a replacement write", async () => {
+    const backing = createMemoryStorage();
+    await backing.set("key", { createdAt: Date.now() - 120_000, value: [1] } as never);
+    const removedKeys: string[] = [];
+    const storage: Storage = {
+      ...backing,
+      async remove(key) {
+        removedKeys.push(key);
+        throw new Error("storage remove failed");
+      },
+    };
+
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toBeUndefined();
+    expect(removedKeys).toEqual(["key"]);
+    await expect(writeCache(storage, "key", [2])).resolves.toBeUndefined();
+    await expect(readCache(storage, "key", 60_000, isNumberArray)).resolves.toEqual([2]);
+  });
+
   it("handles storage write and read errors gracefully", async () => {
     const brokenStorage: Storage = {
       async get() {
