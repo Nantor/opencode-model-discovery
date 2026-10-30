@@ -1,5 +1,4 @@
 import type { Model } from "@opencode/plugin";
-import type { DeepMutable } from "@opencode/plugin/promise/types";
 import type { ModelCost, Modalities } from "@opencode-ai/models";
 
 export type {
@@ -171,7 +170,9 @@ export interface LiteLLMModelsResponse {
 }
 
 export type OpenCodeModelCost = ModelCost;
-export type OpenCodeModelLimit = DeepMutable<Model.Info["limit"]>;
+export type OpenCodeModelLimit = {
+  -readonly [Key in keyof Model.Info["limit"]]: Model.Info["limit"][Key];
+};
 export type OpenCodeModelModalities = Modalities;
 
 export interface OpenCodeModelEntry {
