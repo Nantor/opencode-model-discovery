@@ -2,7 +2,7 @@ import { Models } from "@opencode-ai/models";
 import { Model } from "@opencode/plugin";
 
 import { loadModelsDevSnapshot } from "./models-dev-snapshot.ts";
-import { modelModalityDraft } from "./provider.js";
+import { modelModalityDraft } from "./provider.ts";
 import type {
   Logger,
   LiteLLMModelInfo,
@@ -26,9 +26,9 @@ import { errorMessage, isModelsDevData, safeLog } from "./utils.ts";
  * Whether the buffered `@opencode-ai/models/snapshot` fallback should be
  * bundled. `BUILD_SNAPSHOT` is a compile-time flag injected by esbuild
  * (`--define`) and vitest (`define`): `true` for the fallback build and
- * tests, `false` for the slim build. A bare identifier reference lets both
- * bundler and test runner substitute the literal, so the slim build prunes
- * the dead branch (and its inlined snapshot) while tests keep the fallback.
+ * tests, `false` for the slim build. The typeof guard defaults unbundled Node
+ * execution to the installed snapshot. Both references are replaced with
+ * literals by esbuild, so the slim build still prunes the snapshot branch.
  */
 declare const BUILD_SNAPSHOT: boolean;
 
@@ -53,7 +53,7 @@ export async function getModelsDevData(
     );
   }
 
-  if (BUILD_SNAPSHOT) {
+  if (typeof BUILD_SNAPSHOT === "undefined" || BUILD_SNAPSHOT) {
     return loadModelsDevSnapshot(log);
   }
   await safeLog(log, "warn", "Could not fetch models.dev catalog; slim build has no bundled snapshot to fall back to");

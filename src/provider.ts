@@ -8,9 +8,9 @@ import type {
   OpenCodeModelModalities,
   OpenCodeProvider,
 } from "./types.js";
-import { normalizeBaseURL } from "./fetch.js";
-import { sortByKey, toDisplayName } from "./utils.js";
-import { toNum } from "./types.js";
+import { normalizeBaseURL } from "./fetch.ts";
+import { sortByKey, toDisplayName } from "./utils.ts";
+import { toNum } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Map LiteLLM models → OpenCode provider config
