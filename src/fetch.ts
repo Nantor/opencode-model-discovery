@@ -67,15 +67,28 @@ export function isLiteLLMModel(value: unknown): value is LiteLLMModel {
 }
 
 export function isLiteLLMModelInfoEntry(value: unknown): value is LiteLLMModelInfoEntry {
-  if (typeof value !== "object" || value === null) return false;
-  const entry = value as Partial<LiteLLMModelInfoEntry>;
+  if (!isRecord(value)) return false;
+  const { model_name, litellm_params, model_info } = value;
+  if (
+    typeof model_name !== "string" ||
+    !isRecord(litellm_params) ||
+    !isRecord(model_info)
+  ) return false;
+
+  // These optional fields drive string/array operations downstream. Reject only
+  // the affected metadata entry; /v1/models still supplies its basic model.
+  // Numeric values and capability flags are checked by their mapping helpers.
   return (
-    typeof entry.model_name === "string" &&
-    typeof entry.litellm_params === "object" &&
-    entry.litellm_params !== null &&
-    typeof entry.model_info === "object" &&
-    entry.model_info !== null
+    (litellm_params.model === undefined || typeof litellm_params.model === "string") &&
+    (model_info.mode === undefined || typeof model_info.mode === "string") &&
+    (model_info.supported_openai_params === undefined ||
+      (Array.isArray(model_info.supported_openai_params) &&
+        model_info.supported_openai_params.every((param: unknown) => typeof param === "string")))
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

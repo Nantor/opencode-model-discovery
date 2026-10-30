@@ -59,10 +59,14 @@ async function readOrFetchCache<T>(
   cacheDurationMs: number | undefined,
   fetch: () => Promise<T[]>,
   isItem: (value: unknown) => value is T,
+  allowPartialCache = false,
 ): Promise<T[]> {
   if (!storage || cacheDurationMs === undefined) return fetch();
-  const cached = await readCache(storage, key, cacheDurationMs, isArrayOf(isItem));
-  if (cached !== undefined) return cached;
+  const isCachedValue = allowPartialCache
+    ? (value: unknown): value is unknown[] => Array.isArray(value)
+    : isArrayOf(isItem);
+  const cached = await readCache(storage, key, cacheDurationMs, isCachedValue);
+  if (cached !== undefined) return cached.filter(isItem);
   const fresh = await fetch();
   await writeCache(storage, key, fresh);
   return fresh;
@@ -226,6 +230,9 @@ export async function discoverProviderModels(
         cacheDurationMs,
         () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs),
         isLiteLLMModelInfoEntry,
+        // Older caches can contain malformed entries. Keep usable metadata even
+        // when refetching the optional endpoint would fail.
+        true,
       );
     } catch (error) {
       await safeLog(

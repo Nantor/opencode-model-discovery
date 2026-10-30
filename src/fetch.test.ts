@@ -1,6 +1,36 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { fetchModelInfo, fetchModels } from "./fetch.js";
+import { fetchModelInfo, fetchModels, isLiteLLMModelInfoEntry } from "./fetch.js";
+
+describe("isLiteLLMModelInfoEntry", () => {
+  it.each([
+    null,
+    [],
+    { model_name: 42, litellm_params: {}, model_info: {} },
+    { model_name: "bad", litellm_params: [], model_info: {} },
+    { model_name: "bad", litellm_params: {}, model_info: [] },
+    ...[null, 42, {}, ["chat"]].map((mode) => ({
+      model_name: "bad", litellm_params: {}, model_info: { mode },
+    })),
+    ...[null, 42, {}, "max_completion_tokens", ["max_tokens", {}]].map((supported_openai_params) => ({
+      model_name: "bad", litellm_params: {}, model_info: { supported_openai_params },
+    })),
+    ...[null, 42, {}, ["upstream"]].map((model) => ({
+      model_name: "bad", litellm_params: { model }, model_info: {},
+    })),
+  ])("rejects unusable metadata: %j", (entry) => {
+    expect(isLiteLLMModelInfoEntry(entry)).toBe(false);
+  });
+
+  it("accepts absent optional fields and valid metadata", () => {
+    expect(isLiteLLMModelInfoEntry({ model_name: "basic", litellm_params: {}, model_info: {} })).toBe(true);
+    expect(isLiteLLMModelInfoEntry({
+      model_name: "chat",
+      litellm_params: { model: "upstream" },
+      model_info: { mode: "CHAT", supported_openai_params: ["max_tokens", "max_completion_tokens"] },
+    })).toBe(true);
+  });
+});
 
 describe("fetchModels", () => {
   beforeEach(() => {
