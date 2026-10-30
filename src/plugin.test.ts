@@ -1,3 +1,4 @@
+import { Model, Provider } from "@opencode/plugin";
 import type { Context } from "@opencode/plugin/promise/plugin";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,6 +7,7 @@ import type { ModelsDevData } from "./types.js";
 import { createMemoryStorage, discoveryCacheKey, writeCache } from "./cache.js";
 import { applyDiscovery, ModelDiscoveryPlugin } from "./plugin.js";
 import type { OpenCodeConfig, OpenCodeProvider } from "./types.js";
+import { fillMissingFields } from "./utils.js";
 
 function providerFor(config: OpenCodeConfig, id: string): OpenCodeProvider {
   const provider = config.provider?.[id];
@@ -987,7 +989,8 @@ describe("ModelDiscoveryPlugin", () => {
       update: (_providerID: string, id: string, cb: (draft: Record<string, unknown>) => void) => {
         const draft = { id };
         cb(draft);
-        updated.set(id, draft);
+        // The host applies defaults after raw model transforms finish.
+        updated.set(id, fillMissingFields(draft, Model.Info.default(Provider.ID.make("gateway"), Model.ID.make(id))));
       },
     };
     transform?.(editor as never);
@@ -1057,7 +1060,7 @@ describe("ModelDiscoveryPlugin", () => {
       update: (_providerID: string, id: string, cb: (draft: Record<string, unknown>) => void) => {
         const draft = { id };
         cb(draft);
-        updated.set(id, draft);
+        updated.set(id, fillMissingFields(draft, Model.Info.default(Provider.ID.make("gateway"), Model.ID.make(id))));
       },
     };
     transform?.(editor as never);
@@ -1235,7 +1238,7 @@ describe("ModelDiscoveryPlugin", () => {
       update: vi.fn((_pId: string, mId: string, updateFn: (draft: Record<string, unknown>) => void) => {
         const draft = { id: mId };
         updateFn(draft);
-        updatedModels.set(mId, draft);
+        updatedModels.set(mId, fillMissingFields(draft, Model.Info.default(Provider.ID.make("my-provider"), Model.ID.make(mId))));
       }),
     };
 

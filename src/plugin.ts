@@ -18,7 +18,7 @@ import {
   isLiteLLMModelInfoEntry,
 } from "./fetch.js";
 import { enhanceModelInfo, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
-import { applyModelInfoDraft, materializeModelInfo, modelInfoDraft, sourceModelOverrides } from "./model.js";
+import { applyModelInfoDraft, modelInfoDraft, sourceModelOverrides } from "./model.js";
 import { buildProviderConfig, modelLimitDraft } from "./provider.js";
 import { providerSettings } from "./provider-settings.js";
 import { errorMessage, fillMissingFields, safeLog } from "./utils.js";
@@ -508,7 +508,9 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> =>
               fillMissingFields(overrides, discoveredModel), source,
             ));
           } else {
-            Object.assign(model, materializeModelInfo(providerID, modelID, discoveredModel));
+            // Without a source, all existing raw fields are explicit earlier
+            // transform edits. Fill gaps only; the host applies defaults later.
+            Object.assign(model, fillMissingFields(model, discoveredModel));
           }
         });
       }
