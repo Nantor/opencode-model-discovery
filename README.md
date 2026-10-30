@@ -1,6 +1,6 @@
 # opencode-model-discovery
 
-An OpenCode plugin that discovers models exposed by OpenAI-compatible providers.
+An OpenCode V2 plugin that discovers models exposed by OpenAI-compatible providers. Development and source-script commands require Node.js 24 or newer.
 
 ## Installation
 
@@ -28,9 +28,9 @@ Add the plugin and enable discovery on each provider that should be queried:
 }
 ```
 
-The plugin fetches `/v1/models?return_wildcard_routes=true` when OpenCode starts and enriches matching models with metadata from `/v2/model/info?return_wildcard_routes=true`. OpenCode's later configuration overrides take precedence over discovered fields; see [enrichment precedence and V2 provenance limitations](#enrich-existing-models). Provider model IDs are used unchanged as model keys, including spaces and punctuation. Models whose LiteLLM `mode` cannot serve chat completions (embedding, image and video generation, audio, moderation, rerank, OCR, realtime, batch) are skipped.
+When the model registry first sees an opted-in provider, the plugin asynchronously fetches `/v1/models?return_wildcard_routes=true` and enriches matching models with metadata from `/v2/model/info?return_wildcard_routes=true`, reusing valid cached responses when enabled. It then requests a model-registry reload to publish the results. OpenCode's later configuration overrides take precedence over discovered fields; see [enrichment precedence and V2 provenance limitations](#enrich-existing-models). Provider model IDs are used unchanged as model keys, including spaces and punctuation. Models whose LiteLLM `mode` cannot serve chat completions (embedding, image and video generation, audio, moderation, rerank, OCR, realtime, batch) are skipped.
 
-Model limits map LiteLLM's `max_input_tokens` to `limit.context` and `max_output_tokens` to `limit.output`. LiteLLM's `max_tokens` field is a legacy alias for the output limit and is only used when the dedicated fields are absent.
+Model limits map LiteLLM's `max_input_tokens` to `limit.context` and `limit.input`, and `max_output_tokens` to `limit.output`. LiteLLM's `max_tokens` is only an output fallback when `max_output_tokens` is missing or invalid; it never supplies context. Independently reported limits are preserved before catalog enhancement and host defaults.
 
 ### Wildcard routes
 
@@ -60,15 +60,29 @@ Discovered models continue to use `baseURL` for inference requests. `baseURL` is
 
 Provider-level `headers` are sent to both discovery endpoints and by `debug:provider`, including when `discoveryBaseURL` is set. Explicit headers override defaults case-insensitively: an `Authorization` header overrides the bearer token derived from `settings.apiKey`. If multiple configured names differ only in casing, the last entry wins. Effective request headers are hashed for cache isolation, so changing authentication or tenant-routing headers cannot reuse another scope's inventory; configured header values are not stored as cache identity.
 
-Set `discoveryCache` to a positive ISO 8601 duration to cache each provider's model list and metadata in OpenCode plugin storage between OpenCode restarts. For example, `"PT1H"` caches results for one hour, `"P1D"` for one day, and `"P2W"` for two weeks. The cache is disabled by default; invalid or zero durations are logged as a warning and also disable it. Months and years are not supported because their elapsed duration depends on the start date. Entries that are expired or malformed are ignored, pruned, and refetched.
+Set `discoveryCache` to a positive ISO 8601 duration to cache each provider's model list and metadata in durable OpenCode plugin storage across plugin reloads and server restarts. For example, `"PT1H"` caches results for one hour, `"P1D"` for one day, and `"P2W"` for two weeks. The cache is disabled by default; invalid or zero durations are logged as a warning and also disable it. Months and years are not supported because their elapsed duration depends on the start date.
 
-Cache keys hash the complete discovery URL (including userinfo and query) and effective request headers, preserving endpoint, authentication, and tenant isolation without storing those connection values in plaintext. Cached responses contain only allowlisted fields used by discovery: model/alias IDs, modes, validated limits, pricing, capability flags, interleaved reasoning, and output-token parameter compatibility. Arbitrary response extras, including credential fields in `litellm_params` and `model_info`, are excluded. Model/alias IDs and modes are retained as supplied; do not put secrets in these discovery fields.
+Expired entries are treated as misses and their best-effort removal is awaited before refetching. Malformed cache envelopes or invalid cached values are misses without removal: a successful fetch and cache write can overwrite them, while a failed refetch leaves them stored. Detailed metadata arrays are handled record by record, retaining usable entries and discarding malformed records without refetching the whole array. There is no background pruning sweep.
+
+Cache keys hash the complete configured discovery base URL string (including any userinfo and query) and effective request headers. V2 also includes a hash of the provider/source settings identity, including `sourceConnection`. This isolates endpoint, authentication, and tenant scope without storing those connection values as plaintext cache keys. URL hashing is an identity safeguard, not support for userinfo/query authentication: request URLs are constructed by appending endpoint paths, so use `settings.apiKey` or provider `headers` for credentials. Cached responses contain only allowlisted fields used by discovery: model/alias IDs, modes, validated limits, pricing, capability flags, interleaved reasoning, and output-token parameter compatibility. Arbitrary response extras, including credential fields in `litellm_params` and `model_info`, are excluded. Model/alias IDs and modes are retained as supplied; do not put secrets in these discovery fields. These guarantees cover the plugin's cache projection, not raw debug files or error logs.
 
 The `discovery:v2:` cache namespace invalidates older raw-response caches and refetches metadata. Old entries are not read, migrated, or automatically deleted; they may still contain previously cached credentials or plaintext URLs until removed separately from this plugin's OpenCode storage. Upgrading does not retroactively sanitize stored data.
 
 The plugin sets each discovered model's V2 `compatibility.maxTokensField` from `/v2/model/info`'s `supported_openai_params`: `max_tokens` when only that parameter is supported, or `max_completion_tokens` when it is supported (including when both are listed). This supports shared LiteLLM proxies whose routed models accept different output-token limit parameters. If neither parameter is listed or metadata is missing, the plugin leaves selection to OpenCode's provider/endpoint detection, which uses `max_completion_tokens` for generic gateways. Explicit model compatibility overrides take precedence, including when `enrichExistingModels` is enabled.
 
-Restart OpenCode after changing plugin or provider configuration.
+### Reloading and discovery refresh
+
+OpenCode V2 [automatically reloads watched configuration and plugin files](https://opencode.ai/v2/docs/plugins#reload). Use `/reload` in the TUI or [`opencode reload`](https://opencode.ai/v2/docs/cli/commands#reload) for a full configuration reload without restarting the server. Changes to unwatched plugin dependencies can require a service restart; ordinary plugin/provider configuration edits do not.
+
+Configuration reload and discovery refresh are distinct:
+
+- On a model-transform replay, changes to the host's provider settings, headers, provider metadata, or source connection invalidate the previous discovery attempt. The remote inventory itself is not watched. Disabling discovery or removing the provider stops publishing that inventory. Superseded attempts cannot publish late results.
+- With a positive `discoveryCache`, successful in-memory inventory becomes eligible for refresh on a later replay after that duration (at least one second after success). Each persisted endpoint response has its own cache timestamp and may still be reused if valid. Without a valid duration, successful inventory is retained for unchanged inputs for the life of the plugin instance.
+- Whole-provider failures retry on a later replay after exponential backoff from one second up to one minute. Optional metadata failure still counts as successful basic discovery and follows the success refresh rules. No timer triggers requests or retries.
+
+The [V2 transform API](https://opencode.ai/v2/docs/build/plugins/server#transforms) replays transforms after registration changes or a domain reload; an ordinary read may reuse an unchanged registry. `ctx.model.reload()` does not rerun plugin setup or bypass the discovery cache. To force a network refetch, remove `discoveryCache`, save and reload the configuration, and let discovery settle before restoring it. If caching was already disabled and inputs are unchanged, disable the plugin with a later `"-opencode-model-discovery"` entry in `plugins`, let it unload, then remove that disabling entry to create a fresh instance. The plugin exposes no separate refresh command.
+
+Initial discovery and refresh are asynchronous. Discovery-only models can be absent while a new attempt is pending or failed; the plugin does not retain the old inventory during refresh. Source/configured models remain governed by OpenCode's registry and overrides. Previously returned API snapshots are not updated in place. Discovery cannot make an unavailable provider active.
 
 ## Plugin Settings
 
@@ -79,7 +93,7 @@ Configure these settings separately for each provider under `providers.<provider
 | `discovery` | `boolean` | `false` | Enable model discovery for this provider. |
 | `discoveryBaseURL` | `string` | Provider's `settings.baseURL` | Override the endpoint used for discovery and metadata requests. May include `/v1`; inference still uses the required provider `baseURL`. |
 | `discoveryTimeout` | `number` | `10000` | Timeout in milliseconds for discovery and metadata requests. Must be finite and non-negative; invalid values use the default. |
-| `discoveryCache` | `string` | Disabled | Cache model lists and metadata in OpenCode plugin storage for a positive ISO 8601 duration, such as `"PT1H"`, `"P1D"`, or `"P2W"`. Invalid or zero durations disable caching; months and years are not supported. |
+| `discoveryCache` | `string` | Disabled | Cache model lists and metadata for a positive ISO 8601 duration, such as `"PT1H"`, `"P1D"`, or `"P2W"`; also enables refresh eligibility on later registry replays. Invalid or zero durations disable caching; months and years are not supported. |
 | `enrichExistingModels` | `boolean` | `false` | Enrich models with visible overrides, preserving those values including nested fields. Inherited source models are refreshed regardless. See precedence details below. |
 | `enhanceFromModelsDev` | `boolean` | `false` | Fill missing non-pricing model metadata from models.dev. See [models.dev Enhancement](#modelsdev-enhancement) for matching and fallback behavior. |
 | `modelsDevIgnorePrefixes` | `string[]` | `[]` | Remove the longest matching literal prefix once before models.dev lookup, after stripping the provider path. Only applies when enhancement is enabled. |
@@ -89,7 +103,9 @@ Prefix and postfix matching is case-sensitive and does not change discovered mod
 
 The plugin captures these settings separately and removes them from provider settings during registry reconciliation, including for providers registered after the plugin. Provider connection settings such as `baseURL` and `apiKey` belong alongside the `opencode-model-discovery` object, not inside it.
 
-V2 transforms run in registration order and have no post-provider cleanup hook. When the model transform observes a later provider source, the plugin replaces its cleanup registration after that source; the resulting provider/model rebuild uses cleaned settings. A provider-only read before this reconciliation can still expose the plugin settings, and an already-read snapshot is not modified retroactively. This is not a guarantee for runtimes that bypass model-registry reconciliation.
+V2 transforms run in registration order and have no post-provider cleanup hook. When the model transform observes a later provider source or edit, the plugin replaces its cleanup registration after that source; the resulting provider/model rebuild uses cleaned settings. This depends on model-registry reconciliation after provider invalidation and preservation of the cleaned settings reference in host snapshots. A provider-only read before reconciliation can still expose the plugin settings, and an already-read snapshot is not modified retroactively.
+
+The lockfile currently uses `@opencode/plugin`, `@opencode/schema`, and `@opencode/ai` **2.2.3**. The lifecycle tests simulate the provider/model editor contract; they are not an end-to-end test of a running OpenCode server. The installed editor API exposes neither a final provider-cleanup phase nor original user-config provenance, so the cleanup and precedence boundaries described here remain relevant even when unit tests pass.
 
 ### Enrich existing models
 
@@ -108,9 +124,11 @@ For a source-backed model with visible overrides, `enrichExistingModels: false` 
 
 **V2 provenance limitation:** the editor exposes source definitions and current model drafts, not original user configuration. The plugin identifies visible overrides by comparing the draft with its source. An override already folded into a source, or equal to its source value, cannot be distinguished from inheritance and may be refreshed. OpenCode's later configuration transform applies actual configured values afterward, so those values win regardless of this setting; a config entry first applied later cannot trigger the earlier whole-model skip. The exported config-style helpers receive actual configured entries and therefore preserve those entries directly.
 
+For models without a source definition, existing raw fields from earlier model transforms win regardless of `enrichExistingModels`; discovery fills missing fields and the host supplies defaults afterward.
+
 ## models.dev Enhancement
 
-LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, token limits, or complete input/output capabilities. Set `enhanceFromModelsDev` to `true` to fill those non-pricing gaps directly from `https://models.dev/models.json`, fetched using the official `@opencode-ai/models` client. Enrichment uses OpenCode's `Model.Info` types and maps tool calling, modalities, and reasoning compatibility to runtime fields before applying OpenCode defaults. Fields without a runtime equivalent (`temperature`, `attachment`, and `knowledge`) are not copied; release-date enrichment is also omitted. The plugin does not read OpenCode's cached catalog. Pricing is never copied from this catalog:
+LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, token limits, or complete input/output capabilities. Set `enhanceFromModelsDev` to `true` to fill those non-pricing gaps directly from `https://models.dev/models.json`, fetched using the official `@opencode-ai/models` client. Enrichment uses OpenCode's `Model.Info` types and maps tool calling, modalities, and reasoning compatibility to runtime fields before the host applies defaults. This plugin does not copy catalog `temperature`, `attachment`, `knowledge`, or release-date fields. The plugin does not read OpenCode's cached catalog. Pricing is never copied from this catalog:
 
 ```json
 {
@@ -130,7 +148,7 @@ LiteLLM's `/v2/model/info` does not always report every field OpenCode understan
 }
 ```
 
-The remote catalog is a flat map of provider-independent metadata keyed by canonical model ID (for example, `openai/gpt-4o`). Each discovered model is matched using its defined model ID with any provider prefix stripped (and configured `modelsDevIgnorePrefixes` / `modelsDevIgnorePostfixes` removed) against the provider-stripped catalog model ID (`gpt-4o`). Matching is exact and case-sensitive, and ignores LiteLLM provider metadata. If several entries match, the first in catalog order wins. LiteLLM-derived fields always take precedence — catalog data only fills in non-pricing fields that discovery left `undefined`, including a missing `limit.input`. Costs remain sourced from LiteLLM discovery or explicit model configuration, never from `models.json`. Requests time out after 10 seconds; if the catalog is unavailable or invalid, the plugin logs a warning and falls back to the bundled `@opencode-ai/models/snapshot` canonical models (the fallback build). The snapshot reflects the installed package version and requires no network request. If the snapshot also cannot be loaded, or the plugin was built as the slim variant (which omits the bundled snapshot to keep the bundle small), discovery continues without enhancement.
+The remote catalog is a flat map of provider-independent metadata keyed by canonical model ID (for example, `openai/gpt-4o`). Each discovered model is matched using its defined model ID with any provider prefix stripped (and configured `modelsDevIgnorePrefixes` / `modelsDevIgnorePostfixes` removed) against the provider-stripped catalog model ID (`gpt-4o`). Matching is exact and case-sensitive, and ignores LiteLLM provider metadata. If several entries match, the first in catalog order wins. LiteLLM-derived values always take precedence: catalog data fills missing non-pricing fields, including a missing `limit.input`, and unreported individual modalities. Explicit modality flags, including `false`, constrain catalog enrichment. Costs remain sourced from LiteLLM discovery or explicit model configuration, never from `models.json`. Requests time out after 10 seconds; if the catalog is unavailable or invalid, the plugin logs a warning and falls back to the bundled `@opencode-ai/models/snapshot` canonical models (the fallback build). The snapshot reflects the installed package version and requires no network request. If the snapshot also cannot be loaded, or the plugin was built as the slim variant (which omits the bundled snapshot to keep the bundle small), discovery continues without enhancement.
 
 Models with endpoint-only modes such as `mode: "image_generation"` in `/models` or `/v2/model/info` are excluded from discovery. The `/models` exclusion also applies when detailed model info is unavailable or reports a different mode.
 
@@ -166,6 +184,8 @@ The debug script uses the plugin's URL normalization and timeout validation. If 
 
 The script also writes `debug/<provider-id>.models-dev.json`, keyed by each model ID appearing in discovery, configuration, or runtime inventory (the same set as the CSV). Each value is the complete matching models.dev metadata entry, using the configured prefix/postfix matching rules, or `{}` when no match or catalog data is available.
 
+The debug command fetches discovery directly, independently of the plugin's opt-in and cache; it does not refresh the runtime inventory. It always attempts the catalog lookup, using the installed snapshot when the live catalog fails in this unbundled Node execution path. If both sources fail, the CSV omits `models_dev` and the catalog summary contains empty objects. Provider and model API requests are separate snapshots, so rerunning after reconciliation may also be necessary to see cleaned provider settings.
+
 ## Model Names
 
 Model IDs are normalized into display names. For example, `openai/gpt-4o-mini` becomes `Gpt 4o Mini`.
@@ -176,14 +196,14 @@ Keep provider credentials in environment variables or a secret manager. Do not s
 
 `npm run build` emits two self-contained bundles into `dist/`:
 
-- `opencode-model-discovery.js` — the **fallback** build. It bundles the `@opencode-ai/models/snapshot` canonical catalog (~6.7 MB) used when the live `models.dev` fetch is unavailable. `main`/`exports` point here, so this is the default published variant and is backwards compatible.
-- `opencode-model-discovery-slim.js` — the **slim** build (~0.8 MB). It omits the bundled snapshot; when the live `models.dev` catalog cannot be fetched, the plugin logs a warning and continues discovery without enhancement.
+- `opencode-model-discovery.js` — the **fallback** build. It bundles the `@opencode-ai/models/snapshot` canonical catalog used when the live `models.dev` fetch is unavailable. `main`/`exports` point here, so this is the default published V2 variant.
+- `opencode-model-discovery-slim.js` — the **slim** build. It omits the bundled snapshot; when the live `models.dev` catalog cannot be fetched, the plugin logs a warning and continues discovery without enhancement.
 
 Both files ship in the published package (`files` includes `dist`). To build a single variant instead of both, use `npm run build:fallback` or `npm run build:slim`.
 
-The variant is selected at build time by the esbuild `--define` flag `BUILD_SNAPSHOT` (`true` for fallback, `false` for slim); the code between the two is identical apart from that single compile-time toggle.
+The variant is selected by esbuild's `define` option in `scripts/build.mjs`: `BUILD_SNAPSHOT` is `true` for fallback and `false` for slim. Single-variant build commands clean `dist/` first, so only the selected artifact remains.
 
-`npm run deploy:local` installs the built plugin into the local OpenCode plugins directory and restarts the service. It deploys the **slim** variant by default; pass `--variant=fallback` to deploy the fallback build instead:
+`npm run deploy:local` builds the selected variant, copies it to `~/.config/opencode/plugins/`, and explicitly runs `opencode service restart`. That restart is a side effect of this development script, not a requirement for V2 hot reload. The script uses this fixed global directory rather than resolving `XDG_CONFIG_HOME`, and leaves existing plugin files there in place. It deploys the **slim** variant by default; pass `--variant=fallback` to deploy the fallback build instead:
 
 ```bash
 npm run deploy:local                 # slim (default)

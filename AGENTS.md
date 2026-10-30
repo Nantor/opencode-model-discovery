@@ -4,33 +4,66 @@ opencode-model-discovery - OpenCode plugin for discovering models from OpenAI-co
 
 ## Essential commands
 
-```
-npm run build        # type-check + bundle -> dist/opencode-model-discovery.js
+```sh
+npm run build        # type-check + build both fallback and slim bundles in dist/
+npm run build:fallback # clean dist/, type-check, build fallback only
+npm run build:slim   # clean dist/, type-check, build slim only
+npm run typecheck    # tsc --noEmit
 npm run lint         # eslint src
 npm run lint:fix     # eslint src --fix
-npm run test         # vitest (watch)
-npm run test:run     # vitest run
+npm run test         # vitest src scripts (watch)
+npm run test:run     # vitest run src scripts
+npm run debug:provider -- <provider-id> # query V2 config/runtime APIs and discovery endpoints
 ```
 
 ## Architecture
 
-Plugin entrypoint: `src/index.ts`. Hook implementation: `src/plugin.ts`. Build output: the single bundled file `dist/opencode-model-discovery.js`.
+V2 entrypoint: `src/index.ts` defaults to `Plugin.define({ id, setup: ModelDiscoveryPlugin })`. Setup in `src/plugin.ts` registers synchronous provider/model transforms and returns unload cleanup. `scripts/build.mjs` bundles `dist/opencode-model-discovery.js` (default export target, with catalog snapshot fallback) and `dist/opencode-model-discovery-slim.js` (without snapshot). Both are Node 24 ESM bundles.
 
-Flow: OpenCode loads the plugin -> the `config` hook finds providers with `options["opencode-model-discovery"].discovery: true` -> fetches `GET /v1/models?return_wildcard_routes=true` and optional metadata from `GET /v2/model/info?return_wildcard_routes=true` -> filters out endpoint-only modes (embedding, image generation, ...) -> optionally enhances from models.dev -> merges discovered models into the live provider config. Explicit model entries win. Results may be cached in OpenCode storage (`src/cache.ts`) when `discoveryCache` is set.
+Flow: provider transform captures plugin settings and cleans provider drafts -> model transform reads provider sources and starts asynchronous discovery -> fetches `GET /v1/models?return_wildcard_routes=true` and optional `GET /v2/model/info?return_wildcard_routes=true` -> filters endpoint-only modes -> optionally enhances from models.dev -> stores partial V2 model drafts -> calls `ctx.model.reload()` to publish them on replay. The host supplies defaults after transforms. Discovery cannot activate an unavailable provider.
 
-Module map: `src/fetch.ts` (HTTP + response type guards), `src/provider.ts` (LiteLLM -> OpenCode model mapping), `src/models-dev.ts` (models.dev enhancement), `src/cache.ts` (OpenCode storage cache), `src/utils.ts` (display-name + sort helpers).
+Module map:
 
-Limits: `limit.context` comes from `max_input_tokens`; LiteLLM's `max_tokens` is an output alias, not the context window.
+- `src/plugin.ts`: discovery orchestration, per-provider lifecycle state, V2 bridge, and legacy config-style helpers. A `WeakMap` retains partial runtime drafts alongside legacy model entries.
+- `src/provider-settings.ts`: private settings capture and cleanup registration reconciliation.
+- `src/fetch.ts`: URL normalization, effective headers, timeouts/cancellation, response guards.
+- `src/provider.ts`: LiteLLM mapping, including independent token limits and modality flags.
+- `src/model.ts`: V2 draft conversion and source-versus-visible-override comparison; materialization helper used by tests.
+- `src/models-dev.ts` / `src/models-dev-snapshot.ts`: non-pricing catalog enhancement and snapshot fallback. Unbundled Node defaults to the installed snapshot; slim builds omit it.
+- `src/cache.ts`: duration parsing, hashed keys, allowlisted response projections, plugin storage, and paginated memory storage.
+- `src/types.ts` / `src/utils.ts`: partial V2 and legacy types, validation, merge, display-name, and sort helpers.
+
+Limits: `max_input_tokens` supplies `limit.context` and `limit.input`; `max_output_tokens` supplies `limit.output`, falling back to `max_tokens` only for output. Preserve partial limits and explicit negative capabilities through enhancement. V2 output-token encoding uses `compatibility.maxTokensField`.
 
 ### Key exports
 
-- `ModelDiscoveryPlugin` - OpenCode plugin function and default export
-- `applyDiscovery(config, log?)` - applies discovery to an OpenCode config
-- `discoverProviderModels(providerID, provider, log?)` - discovers one opted-in provider
+- Default export: the V2 plugin definition object, not the setup function.
+- `ModelDiscoveryPlugin(ctx)`: asynchronous V2 setup; resolves to an unload cleanup function.
+- `applyDiscovery(config, log?, storage?)`: mutates the legacy `config.provider` / provider `options` shape, not native V2 `providers` / `settings`.
+- `discoverProviderModels(providerID, provider, log?, storage?, lifecycle?)`: mutates one legacy-shaped provider; V2 setup uses it with a temporary wrapper and internal cancellation/fingerprint context.
+- `createMemoryStorage()` and type `Storage`: in-memory implementation of the V2 plugin storage contract, including prefix/cursor pagination; production uses `ctx.storage`.
+
+The config-style helpers are a compatibility boundary, not V2 hooks. Their models use legacy fields such as `tool_call`, `modalities`, and complete `limit` objects; they cannot expose all partial V2 metadata. Their `transformRequestBody` shim is for the legacy AI SDK path and is not installed into V2 runtime settings. Actual configured entries win in those helpers; `enrichExistingModels` fills their missing fields.
 
 ### Provider config
 
-The plugin only touches providers with `options["opencode-model-discovery"].discovery === true`. `options.baseURL` may include `/v1`. Plugin-only options (the whole `options["opencode-model-discovery"]` object) are removed before OpenCode initializes the AI SDK adapter.
+Native V2 configuration uses `providers.<id>.settings["opencode-model-discovery"]`. Only `discovery === true` starts discovery. `settings.baseURL` is required and may include `/v1`; `discoveryBaseURL` overrides discovery only. Provider-level `headers` and `settings.apiKey` authenticate discovery. Plugin settings are captured and removed during reconciliation even when discovery is disabled.
+
+Provider/model transforms replay in registration order. If a provider source or edit arrives after cleanup, `src/provider-settings.ts` replaces its cleanup registration after that source. This relies on provider invalidation causing model reconciliation, and on the host preserving the cleaned settings reference into provider snapshots. A provider-only read before reconciliation can expose plugin settings; already-returned snapshots are never repaired retroactively. There is no post-provider cleanup hook in the installed API.
+
+Inherited source models receive discovered fields; source presence is not user-config provenance. Visible overrides are draft fields differing from source: with enrichment disabled they skip that source-backed model, and with enrichment enabled they win over discovery, then source. For models without a source, earlier raw draft edits win and discovery fills gaps. Equal-to-source or source-folded overrides cannot be identified. The host's later configuration transform still wins; entries first applied there cannot cause an earlier whole-model skip.
+
+### Lifecycle and cache
+
+V2 watches configuration/plugin files and supports `/reload` or `opencode reload`; service restarts are not required for ordinary config edits. Domain `ctx.model.reload()` replays transforms without rerunning setup. Discovery fingerprints provider metadata/settings/headers and `sourceConnection`; changed inputs, opt-out, removal, or unload invalidate state and reject superseded results.
+
+Successful inventory persists in memory for unchanged inputs. A positive `discoveryCache` duration also makes it eligible for refresh on a later replay (minimum one second after success); without it there is no timed refresh. Failed discovery retries only on a later replay after exponential backoff (1–60 seconds). There is no timer or standalone refresh command. A registry read alone need not replay an unchanged registry. Optional metadata failure is a successful basic discovery, not a retryable whole-provider failure. See README's lifecycle section for forced refetch and snapshot behavior.
+
+Durable cache entries use `discovery:v2:` with hashed endpoint/header identity and an additional V2 source/settings fingerprint. Only allowlisted response fields are persisted; retained model/alias IDs and modes are not secret-redacted. Older namespaces are not read, migrated, or deleted. Expired entries are removed best-effort and awaited before refetch; malformed envelopes/invalid values are misses without removal and may be overwritten on a successful fetch/write. Cached metadata arrays keep usable entries and discard malformed records without forcing refetch. No background storage sweep occurs.
+
+### API and verification boundary
+
+The lockfile currently installs `@opencode/plugin`, `@opencode/schema`, and `@opencode/ai` 2.2.3. Inspect the installed declarations/encoder when changing integration behavior; current online V2 docs may describe newer APIs. Lifecycle tests replay simulated editors, not a live OpenCode server. F07 cleanup convergence and F08 provenance remain subject to the host boundaries above.
 
 ## ESLint conventions
 
@@ -42,4 +75,4 @@ The plugin only touches providers with `options["opencode-model-discovery"].disc
 
 ## Test fixtures
 
-Tests mock `fetch` globally via `vi.stubGlobal("fetch", vi.fn())`.
+Tests generally mock `fetch` globally via `vi.stubGlobal("fetch", vi.fn())`. `src/plugin.lifecycle.test.ts`, `src/plugin.source.test.ts`, and `src/plugin.composition.test.ts` exercise transform replay and precedence; `src/plugin.encoder.test.ts` checks installed V2 request encoding. `scripts/debug-provider.test.ts` tests debug helpers; `scripts/node-fallback.test.ts` runs direct-Node subprocess checks of offline catalog fallback and the debug entrypoint.
