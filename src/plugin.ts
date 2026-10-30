@@ -222,13 +222,14 @@ export async function discoverProviderModels(
     }
     // V2 cache entries also follow the complete source/settings identity.
     const cacheScope = lifecycle ? `:${lifecycle.fingerprint}` : "";
-    const modelsCacheKey = discoveryCacheKey("models", discoveryBaseURL, options.apiKey) + cacheScope;
-    const infoCacheKey = discoveryCacheKey("model-info", discoveryBaseURL, options.apiKey) + cacheScope;
+    const headers = { ...provider.headers };
+    const modelsCacheKey = discoveryCacheKey("models", discoveryBaseURL, options.apiKey, headers) + cacheScope;
+    const infoCacheKey = discoveryCacheKey("model-info", discoveryBaseURL, options.apiKey, headers) + cacheScope;
     const models = await readOrFetchCache(
       storage,
       modelsCacheKey,
       cacheDurationMs,
-      () => fetchModels(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal),
+      () => fetchModels(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal, headers),
       isLiteLLMModel,
       false,
       lifecycle?.signal,
@@ -239,7 +240,7 @@ export async function discoverProviderModels(
         storage,
         infoCacheKey,
         cacheDurationMs,
-        () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal),
+        () => fetchModelInfo(discoveryBaseURL, options.apiKey, timeoutMs, lifecycle?.signal, headers),
         isLiteLLMModelInfoEntry,
         // Older caches can contain malformed entries. Keep usable metadata even
         // when refetching the optional endpoint would fail.
@@ -432,7 +433,7 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> =>
       // Include the privately captured opt-in so moving cleanup does not change
       // discovery identity, while actual input changes still invalidate F06 state.
       const fingerprint = discoveryFingerprint({
-        provider: { ...record.provider, settings: provider.options },
+        provider: { ...record.provider, headers: provider.headers, settings: provider.options },
         sourceConnection: record.sourceConnection,
       });
       if (pluginOptions?.discovery !== true || previous?.fingerprint !== fingerprint) {
@@ -526,12 +527,15 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> =>
 };
 
 function providerFromV2(
-  info: Pick<Provider.Info, "id" | "name" | "settings">,
+  info: Pick<Provider.Info, "id" | "name" | "settings" | "headers">,
   pluginOptions: NonNullable<OpenCodeProvider["options"]>["opencode-model-discovery"],
 ): OpenCodeProvider {
   const options = info.settings as OpenCodeProvider["options"];
   return {
     name: info.name,
+    // Canonical names preserve effective last-entry precedence in the sorted
+    // fingerprint, including when duplicate case variants change insertion order.
+    headers: Object.fromEntries(Object.entries(info.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value])),
     // Snapshot discovery inputs without cloning unrelated callable adapter options.
     options: { ...options, "opencode-model-discovery": structuredClone(pluginOptions) },
   };

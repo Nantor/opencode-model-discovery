@@ -131,6 +131,30 @@ describe("applyDiscovery", () => {
     expect(providerFor(config, "gateway").models?.["gpt-4o"]).toBeDefined();
   });
 
+  it("isolates header-only tenant caches in the compatibility helper without a runtime fingerprint", async () => {
+    const storage = createMemoryStorage();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const headers = new Headers(init?.headers);
+      if (headers.get("x-api-key") !== "header-secret") return new Response("Unauthorized", { status: 401 });
+      expect(headers.has("authorization")).toBe(false);
+      const tenant = headers.get("x-tenant");
+      return Response.json({ data: input.toString().includes("/models") ? [{ id: tenant }] : [{
+        model_name: tenant, litellm_params: {}, model_info: { max_input_tokens: 8192, max_output_tokens: tenant === "a" ? 100 : 200 },
+      }] });
+    });
+    for (const tenant of ["a", "b", "a"]) {
+      const config: OpenCodeConfig = { provider: { gateway: {
+        headers: { "X-API-Key": "header-secret", "X-Tenant": tenant },
+        options: { baseURL: "https://gateway/v1", "opencode-model-discovery": { discovery: true, discoveryCache: "PT1H" } },
+      } } };
+      await applyDiscovery(config, undefined, storage);
+      expect(Object.keys(providerFor(config, "gateway").models!)).toEqual([tenant]);
+      expect(providerFor(config, "gateway").models![tenant].limit?.output).toBe(tenant === "a" ? 100 : 200);
+    }
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(JSON.stringify(await storage.scan({ prefix: "discovery:" }))).not.toContain("header-secret");
+  });
+
   it("de-duplicates model ids repeated by /v1/models", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => ({
       ok: true,

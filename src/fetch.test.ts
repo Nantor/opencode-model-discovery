@@ -94,7 +94,7 @@ describe("fetchModelInfo", () => {
     expect(mockFetch).toHaveBeenCalledWith(
       "http://localhost:4000/v2/model/info?return_wildcard_routes=true",
       expect.objectContaining({
-        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+        headers: expect.any(Headers),
         signal: expect.any(AbortSignal),
       }),
     );
@@ -125,10 +125,11 @@ describe("fetchModelInfo", () => {
     expect(mockFetch).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer sk-secret" }),
+        headers: expect.any(Headers),
         signal: expect.any(AbortSignal),
       }),
     );
+    expect(new Headers(mockFetch.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer sk-secret");
   });
 
   it("returns the data array from the response", async () => {
@@ -166,5 +167,30 @@ describe("fetchModelInfo", () => {
     await expect(fetchModelInfo("http://localhost:4000")).rejects.toThrow(
       "missing data array",
     );
+  });
+});
+
+describe.each([fetchModels, fetchModelInfo])("discovery endpoint headers (%s)", (fetchEndpoint) => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([
+    { apiKey: undefined, headers: { "X-API-Key": "header-secret" }, authorization: null },
+    { apiKey: "bearer-secret", headers: { "X-Tenant": "tenant-a" }, authorization: "Bearer bearer-secret" },
+    { apiKey: "ignored", headers: { aUtHoRiZaTiOn: "Basic explicit" }, authorization: "Basic explicit" },
+    { apiKey: "ignored", headers: { Authorization: "first", authorization: "last" }, authorization: "last" },
+    { apiKey: "ignored", headers: { AUTHORIZATION: "" }, authorization: "" },
+  ])("honors explicit auth and routing headers: $headers", async ({ apiKey, headers, authorization }) => {
+    const configured = Object.freeze({ ...headers, "content-type": "application/custom", "X-Tenant": "tenant-a" });
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const sent = new Headers(init.headers);
+      expect(sent.get("authorization")).toBe(authorization);
+      expect(sent.get("x-tenant")).toBe("tenant-a");
+      expect(sent.get("content-type")).toBe("application/custom");
+      if ("X-API-Key" in headers) expect(sent.get("x-api-key")).toBe("header-secret");
+      return Response.json({ data: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchEndpoint("https://gateway/v1", apiKey, undefined, undefined, configured);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

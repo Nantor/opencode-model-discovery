@@ -203,6 +203,7 @@ export interface OpenCodeDiscoveryOptions {
 export interface OpenCodeProvider {
   npm?: string;
   name?: string;
+  headers?: Readonly<Record<string, string>>;
   options?: {
     baseURL?: string;
     apiKey?: string;

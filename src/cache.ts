@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { Context } from "@opencode/plugin/promise/plugin";
+import { discoveryHeaders } from "./fetch.js";
 
 export type Storage = Context["storage"];
 
@@ -80,11 +81,14 @@ export function discoveryCacheKey(
   endpoint: "models" | "model-info",
   baseURL: string,
   apiKey?: string,
+  headers?: Readonly<Record<string, string>>,
 ): string {
-  const apiKeyHash = apiKey
-    ? createHash("sha256").update(apiKey).digest("hex")
-    : "none";
-  return `discovery:${endpoint}:${baseURL}:${apiKeyHash}`;
+  // Every header can select auth, tenant, or routing scope. Hash the effective
+  // request headers in canonical name order; never persist configured secrets.
+  const headerHash = createHash("sha256")
+    .update(JSON.stringify([...discoveryHeaders(apiKey, headers).entries()]))
+    .digest("hex");
+  return `discovery:${endpoint}:${baseURL}:${headerHash}`;
 }
 
 export function createMemoryStorage(): Storage {

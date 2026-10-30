@@ -36,7 +36,24 @@ describe("discoveryCacheKey", () => {
     expect(key1).toBe(key2);
     expect(key1).toContain("discovery:models:https://api.example.com:");
     expect(key1).not.toContain("secret-key");
-    expect(keyNoAuth).toContain("discovery:models:https://api.example.com:none");
+    expect(keyNoAuth).not.toBe(key1);
+  });
+
+  it("isolates all effective auth/tenant headers without exposing secrets and ignores header casing/order", () => {
+    const key = (headers: Record<string, string>, apiKey = "ignored-bearer"): string =>
+      discoveryCacheKey("models", "https://gateway/v1", apiKey, headers);
+    const headers = { Authorization: "Basic secret-auth", "X-API-Key": "secret-key", "X-Tenant": "secret-tenant" };
+    const original = key(headers);
+    expect(key({ "x-tenant": "secret-tenant", "x-api-key": "secret-key", authorization: "Basic secret-auth" }, "also-ignored"))
+      .toBe(original);
+    for (const name of Object.keys(headers)) {
+      expect(key({ ...headers, [name]: "changed" })).not.toBe(original);
+    }
+    for (const value of Object.values(headers)) expect(original).not.toContain(value);
+    expect(original).not.toContain("ignored-bearer");
+    expect(key({})).not.toBe(original);
+    expect(key({ Authorization: "first", authorization: "last" })).toBe(key({ authorization: "last" }));
+    expect(key({ "X-Tenant": "a" }, "key-a")).not.toBe(key({ "X-Tenant": "a" }, "key-b"));
   });
 });
 

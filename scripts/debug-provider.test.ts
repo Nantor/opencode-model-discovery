@@ -3,6 +3,7 @@ import { discoveryTimeout } from "../src/fetch.js";
 
 import {
   fetchDiscoveryResponses,
+  fetchProviderDiscoveryResponses,
   modelSummaryCSV,
   parseConfigEntries,
   providerSettings,
@@ -24,10 +25,13 @@ describe("OpenCode V2 provider debugging", () => {
     await expect(fetchDiscoveryResponses("https://proxy/v1///", "test-key", 2000))
       .resolves.toEqual({ models, modelInfo: info });
     expect(fetchMock).toHaveBeenCalledWith("https://proxy/v1/models?return_wildcard_routes=true", expect.objectContaining({
-      headers: { "Content-Type": "application/json", Authorization: "Bearer test-key" },
+      headers: expect.any(Headers),
       signal: expect.any(AbortSignal),
     }));
     expect(fetchMock).toHaveBeenCalledWith("https://proxy/v2/model/info?return_wildcard_routes=true", expect.anything());
+    for (const [, init] of vi.mocked(fetch).mock.calls) {
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-key");
+    }
   });
 
   it("retains the model list when optional detailed info fails", async () => {
@@ -38,6 +42,35 @@ describe("OpenCode V2 provider debugging", () => {
     expect(result.models).toEqual({ data: [{ id: "model" }] });
     expect(result.modelInfoError).toContain("HTTP 403");
     expect(result.modelInfo).toEqual({ error: result.modelInfoError });
+  });
+
+  it.each([undefined, "ignored-bearer"])("sends configured auth and tenant headers from V2 config to the discovery override (apiKey=%s)", async (apiKey) => {
+    const { config } = parseConfigEntries(JSON.stringify([{
+      type: "document", info: { providers: { gateway: {
+        headers: { "X-API-Key": "header-secret", Authorization: "old", aUtHoRiZaTiOn: "Basic explicit", "X-Tenant": "tenant-a" },
+        settings: { baseURL: "https://inference/v1", apiKey,
+          "opencode-model-discovery": { discoveryBaseURL: "https://discovery/v1///" } },
+      } } },
+    }]));
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers);
+      if (headers.get("x-api-key") !== "header-secret" || headers.get("authorization") !== "Basic explicit") {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const tenant = headers.get("x-tenant");
+      return Response.json({ data: url.includes("/models") ? [{ id: tenant }] : [{ model_name: tenant }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    for (const tenant of ["tenant-a", "tenant-b"]) {
+      config.providers!.gateway.headers!["X-Tenant"] = tenant;
+      await expect(fetchProviderDiscoveryResponses("gateway", config)).resolves.toEqual({
+        models: { data: [{ id: tenant }] }, modelInfo: { data: [{ model_name: tenant }] },
+      });
+    }
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(Array.from({ length: 2 }, () => [
+      "https://discovery/v1/models?return_wildcard_routes=true", "https://discovery/v2/model/info?return_wildcard_routes=true",
+    ]).flat());
+    expect(config.providers!.gateway.settings!.baseURL).toBe("https://inference/v1");
   });
 
   it("reports a mandatory model-list failure", async () => {

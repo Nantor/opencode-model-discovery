@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
 import type { ModelsDevData, ModelsDevModel, OpenCodeDiscoveryOptions } from "../src/types.js";
-import { discoveryTimeout, normalizeBaseURL } from "../src/fetch.ts";
+import { discoveryHeaders, discoveryTimeout, normalizeBaseURL } from "../src/fetch.ts";
 import { findModelsDevEntry, getModelsDevData } from "../src/models-dev.ts";
 
 interface ProviderSettings {
@@ -16,6 +16,7 @@ interface ProviderSettings {
 
 interface ProviderConfig {
   settings?: ProviderSettings;
+  headers?: Record<string, string>;
   models?: Record<string, Record<string, unknown>>;
   [key: string]: unknown;
 }
@@ -225,9 +226,9 @@ async function fetchRaw(
   path: string,
   apiKey: string | undefined,
   timeoutMs: number | undefined,
+  configuredHeaders?: Readonly<Record<string, string>>,
 ): Promise<unknown> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const headers = discoveryHeaders(apiKey, configuredHeaders);
 
   const url = `${normalizeBaseURL(baseURL)}${path}`;
   const controller = new AbortController();
@@ -248,16 +249,26 @@ export async function fetchDiscoveryResponses(
   baseURL: string,
   apiKey?: string,
   timeout?: unknown,
+  headers?: Readonly<Record<string, string>>,
 ): Promise<{ models: unknown; modelInfo: unknown; modelInfoError?: string }> {
   const timeoutMs = discoveryTimeout(timeout);
   const [models, modelInfo] = await Promise.allSettled([
-    fetchRaw(baseURL, "/v1/models?return_wildcard_routes=true", apiKey, timeoutMs),
-    fetchRaw(baseURL, "/v2/model/info?return_wildcard_routes=true", apiKey, timeoutMs),
+    fetchRaw(baseURL, "/v1/models?return_wildcard_routes=true", apiKey, timeoutMs, headers),
+    fetchRaw(baseURL, "/v2/model/info?return_wildcard_routes=true", apiKey, timeoutMs, headers),
   ]);
   if (models.status === "rejected") throw models.reason;
   if (modelInfo.status === "fulfilled") return { models: models.value, modelInfo: modelInfo.value };
   const error = modelInfo.reason instanceof Error ? modelInfo.reason.message : String(modelInfo.reason);
   return { models: models.value, modelInfo: { error }, modelInfoError: error };
+}
+
+export async function fetchProviderDiscoveryResponses(providerID: string, config: DebugConfig): ReturnType<typeof fetchDiscoveryResponses> {
+  const options = providerSettings(providerID, config);
+  const discoveryOptions = options["opencode-model-discovery"];
+  const baseURL = typeof discoveryOptions?.discoveryBaseURL === "string"
+    ? discoveryOptions.discoveryBaseURL
+    : options.baseURL!;
+  return fetchDiscoveryResponses(baseURL, options.apiKey, discoveryOptions?.discoveryTimeout, config.providers?.[providerID]?.headers);
 }
 
 async function main(): Promise<void> {
@@ -279,9 +290,7 @@ async function main(): Promise<void> {
   await mkdir(resultsDirectory, { recursive: true });
   const prefix = join(resultsDirectory, providerID.replaceAll(/[^a-zA-Z0-9._-]/g, "_"));
 
-  const { models, modelInfo, modelInfoError } = await fetchDiscoveryResponses(
-    baseURL, options.apiKey, discoveryOptions?.discoveryTimeout,
-  );
+  const { models, modelInfo, modelInfoError } = await fetchProviderDiscoveryResponses(providerID, config);
   if (modelInfoError) console.warn(`Detailed model info unavailable: ${modelInfoError}`);
   const modelsPath = `${prefix}.models.json`;
   const modelInfoPath = `${prefix}.model-info.json`;

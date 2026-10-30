@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "@opencode/plugin/promise/plugin";
-import { createMemoryStorage } from "./cache.js";
+import { createMemoryStorage, type Storage } from "./cache.js";
 import { ModelDiscoveryPlugin } from "./plugin.js";
 
 type Transform = Parameters<Context["model"]["transform"]>[0];
@@ -23,7 +23,7 @@ type Harness = {
   registrations: () => number;
 };
 
-async function harness(order: "earlier" | "later" = "earlier"): Promise<Harness> {
+async function harness(order: "earlier" | "later" = "earlier", storage: Storage = createMemoryStorage()): Promise<Harness> {
   let transform: Transform | undefined;
   const source: Source = {
     provider: { id: "gateway", name: "Gateway", settings: {
@@ -84,7 +84,7 @@ async function harness(order: "earlier" | "later" = "earlier"): Promise<Harness>
       return { dispose: async () => { providerTransforms.delete(cb); providerRevision++; } };
     }) },
     model: { transform: vi.fn(async (cb: Transform) => { transform = cb; }), reload },
-    storage: createMemoryStorage(),
+    storage,
   } as unknown as Context);
   if (order === "later") providerTransforms.add("source");
   return {
@@ -154,6 +154,63 @@ describe.each(["earlier", "later"] as const)("V2 discovery lifecycle (%s provide
     expect(h.reload).not.toHaveBeenCalled();
     expect(h.registrations()).toBe(1);
     h.cleanup();
+  });
+
+  it.each([undefined, "unused-bearer"])("authenticates both discovery endpoints and isolates tenant/auth changes across replays and instances (%s)", async (apiKey) => {
+    const storage = createMemoryStorage();
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers);
+      if (headers.get("authorization") !== "Basic explicit" || !["header-secret-a", "header-secret-b"].includes(headers.get("x-api-key") ?? "")) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const tenant = headers.get("x-tenant");
+      return Response.json({ data: url.includes("/models") ? [{ id: tenant }] : [{
+        model_name: tenant, litellm_params: {}, model_info: { max_output_tokens: tenant === "tenant-a" ? 111 : 222 },
+      }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const h = await harness(order, storage);
+    const configure = (h: Harness, tenant: string, key: string): void => {
+      h.source.provider.headers = { "X-API-Key": key, Authorization: "discarded", aUtHoRiZaTiOn: "Basic explicit", "X-Tenant": tenant };
+      h.source.provider.settings.apiKey = apiKey;
+      h.source.provider.settings["opencode-model-discovery"] = {
+        discovery: true, discoveryCache: "PT1H", discoveryBaseURL: "https://discovery.example/v1///",
+      };
+    };
+    configure(h, "tenant-a", "header-secret-a");
+    h.replay();
+    await settle();
+    expect(h.output().get("gateway/tenant-a")).toMatchObject({ limit: { output: 111 } });
+    configure(h, "tenant-b", "header-secret-a");
+    expect(h.replay().size).toBe(0);
+    await settle();
+    expect([...h.output().keys()]).toEqual(["gateway/tenant-b"]);
+    expect(h.output().get("gateway/tenant-b")).toMatchObject({ limit: { output: 222 } });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // In-place header mutation must invalidate the fingerprint too.
+    h.source.provider.headers!["X-API-Key"] = "header-secret-b";
+    expect(h.replay().size).toBe(0);
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(h.providers()[0].provider.settings.baseURL).toBe("https://old.example/v1");
+    h.cleanup();
+
+    const fresh = await harness(order, storage);
+    configure(fresh, "tenant-a", "header-secret-a");
+    fresh.replay();
+    await settle();
+    expect([...fresh.output().keys()]).toEqual(["gateway/tenant-a"]);
+    expect(fresh.output().get("gateway/tenant-a")).toMatchObject({ limit: { output: 111 } });
+    expect(fetchMock).toHaveBeenCalledTimes(6); // Reuses only this tenant/auth scope.
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(Array.from({ length: 3 }, () => [
+      "https://discovery.example/v1/models?return_wildcard_routes=true",
+      "https://discovery.example/v2/model/info?return_wildcard_routes=true",
+    ]).flat());
+    const cached = JSON.stringify(await storage.scan({ prefix: "discovery:" }));
+    for (const secret of ["header-secret-a", "header-secret-b", "Basic explicit", "discarded", "unused-bearer"]) {
+      expect(cached).not.toContain(secret);
+    }
+    fresh.cleanup();
   });
 
   it("does not reuse a captured opt-in for an identical later replacement without settings", async () => {
@@ -266,6 +323,27 @@ describe.each(["earlier", "later"] as const)("V2 discovery lifecycle (%s provide
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(h.reload).toHaveBeenCalledOnce();
+    h.cleanup();
+  });
+
+  it("fingerprints effective case-insensitive header precedence, including reordered duplicates", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => url.includes("/models")
+      ? inventory(new Headers(init.headers).get("authorization")!) : Response.json({ data: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const h = await createHarness();
+    h.source.provider.headers = { Authorization: "first", authorization: "last" };
+    h.replay();
+    await settle();
+    expect([...h.output().keys()]).toEqual(["gateway/last"]);
+    h.source.provider.headers = { authorization: "last", Authorization: "first" };
+    expect(h.replay().size).toBe(0);
+    await settle();
+    expect([...h.output().keys()]).toEqual(["gateway/first"]);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    h.source.provider.headers = { AUTHORIZATION: "first" };
+    expect([...h.replay().keys()]).toEqual(["gateway/first"]);
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     h.cleanup();
   });
 

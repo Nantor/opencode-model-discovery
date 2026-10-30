@@ -22,20 +22,26 @@ function trimTrailingSlashes(baseURL: string): string {
   return baseURL.slice(0, end);
 }
 
+/** Explicit provider headers override defaults, including bearer auth, case-insensitively. */
+export function discoveryHeaders(apiKey?: string, configured?: Readonly<Record<string, string>>): Headers {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (apiKey) headers.set("Authorization", `Bearer ${apiKey}`);
+  // set (rather than constructor/append) gives duplicate case variants a single,
+  // deterministic last-configured value instead of joining credentials with commas.
+  for (const [name, value] of Object.entries(configured ?? {})) headers.set(name, value);
+  return headers;
+}
+
 async function fetchEndpoint<T>(
   baseURL: string,
   path: string,
   apiKey?: string,
   timeoutMs = 10_000,
   signal?: AbortSignal,
+  configuredHeaders?: Readonly<Record<string, string>>,
 ): Promise<T> {
   const url = `${trimTrailingSlashes(baseURL)}${path}`;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  }
+  const headers = discoveryHeaders(apiKey, configuredHeaders);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -101,6 +107,7 @@ export async function fetchModels(
   apiKey?: string,
   timeoutMs?: number,
   signal?: AbortSignal,
+  headers?: Readonly<Record<string, string>>,
 ): Promise<LiteLLMModel[]> {
   const url = normalizeBaseURL(baseURL);
   const json = await fetchEndpoint<LiteLLMModelsResponse>(
@@ -109,6 +116,7 @@ export async function fetchModels(
     apiKey,
     timeoutMs,
     signal,
+    headers,
   );
   if (!Array.isArray(json.data)) {
     throw new Error(`Unexpected response from ${url}/v1/models: missing data array`);
@@ -125,6 +133,7 @@ export async function fetchModelInfo(
   apiKey?: string,
   timeoutMs?: number,
   signal?: AbortSignal,
+  headers?: Readonly<Record<string, string>>,
 ): Promise<LiteLLMModelInfoEntry[]> {
   const url = normalizeBaseURL(baseURL);
   const json = await fetchEndpoint<LiteLLMModelInfoResponse>(
@@ -133,6 +142,7 @@ export async function fetchModelInfo(
     apiKey,
     timeoutMs,
     signal,
+    headers,
   );
 
   if (!Array.isArray(json.data)) {
