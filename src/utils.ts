@@ -4,6 +4,31 @@ import type { Logger, ModelsDevData, ModelsDevModel } from "./types.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Fill undefined fields recursively; explicit values (including arrays and null) win. */
+export function fillMissingFields<T extends object>(configured: T, discovered: object): T {
+  const result = { ...configured } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(discovered)) {
+    const existing = Object.hasOwn(result, key) ? result[key] : undefined;
+    if (existing === undefined || (isPlainObject(existing) && isPlainObject(value))) {
+      Object.defineProperty(result, key, {
+        value: isPlainObject(value)
+          ? fillMissingFields(isPlainObject(existing) ? existing : {}, value)
+          : Array.isArray(value) ? structuredClone(value) : value,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+  return result as T;
+}
+
 /**
  * Type guard for the flat models.dev catalog shape: an object whose values are
  * non-array model objects (each with a string `id` and no nested `models`

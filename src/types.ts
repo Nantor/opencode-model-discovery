@@ -193,6 +193,7 @@ export interface OpenCodeDiscoveryOptions {
   discoveryBaseURL?: string;
   discoveryTimeout?: number;
   discoveryCache?: string;
+  enrichExistingModels?: boolean;
   enhanceFromModelsDev?: boolean;
   modelsDevIgnorePrefixes?: string[];
   modelsDevIgnorePostfixes?: string[];

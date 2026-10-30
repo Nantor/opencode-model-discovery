@@ -74,6 +74,7 @@ Configure these settings separately for each provider under `providers.<provider
 | `discoveryBaseURL` | `string` | Provider's `settings.baseURL` | Override the endpoint used for discovery and metadata requests. May include `/v1`; inference still uses the required provider `baseURL`. |
 | `discoveryTimeout` | `number` | `10000` | Timeout in milliseconds for discovery and metadata requests. Must be finite and non-negative; invalid values use the default. |
 | `discoveryCache` | `string` | Disabled | Cache model lists and metadata in OpenCode plugin storage for a positive ISO 8601 duration, such as `"PT1H"`, `"P1D"`, or `"P2W"`. Invalid or zero durations disable caching; months and years are not supported. |
+| `enrichExistingModels` | `boolean` | `false` | Fill missing fields on existing models with discovered metadata (and models.dev metadata when enabled). Manually configured values always win, including nested fields. |
 | `enhanceFromModelsDev` | `boolean` | `false` | Fill missing non-pricing model metadata from models.dev. See [models.dev Enhancement](#modelsdev-enhancement) for matching and fallback behavior. |
 | `modelsDevIgnorePrefixes` | `string[]` | `[]` | Remove the longest matching literal prefix once before models.dev lookup, after stripping the provider path. Only applies when enhancement is enabled. |
 | `modelsDevIgnorePostfixes` | `string[]` | `[]` | Remove the longest matching literal postfix once before models.dev lookup. Only applies when enhancement is enabled. |
@@ -81,6 +82,19 @@ Configure these settings separately for each provider under `providers.<provider
 Prefix and postfix matching is case-sensitive and does not change discovered model keys, request IDs, or display names. Empty or non-string entries are ignored.
 
 These settings are consumed by the plugin and are not passed to the underlying provider runtime. Provider connection settings such as `baseURL` and `apiKey` belong alongside the `opencode-model-discovery` object, not inside it.
+
+### Enrich existing models
+
+Set `enrichExistingModels: true` alongside `discovery: true` in the provider's `settings["opencode-model-discovery"]`:
+
+```json
+{
+  "discovery": true,
+  "enrichExistingModels": true
+}
+```
+
+For example, a model configured with only a custom `name` keeps that name and gains discovered limits, capabilities, and pricing. Nested objects are filled field by field: a configured `limit.output` is preserved while a missing `limit.context` can be enriched. Explicit values such as `false`, `0`, `null`, and arrays (including empty arrays) are preserved; arrays are not combined. Models absent from discovery are left as configured. When this setting is omitted or `false`, existing model entries are skipped as before. Enable `enhanceFromModelsDev` as well to include its non-pricing metadata.
 
 ## models.dev Enhancement
 

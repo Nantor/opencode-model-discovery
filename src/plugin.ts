@@ -1,4 +1,4 @@
-import type { Model, Provider } from "@opencode/plugin";
+import type { Provider } from "@opencode/plugin";
 import type { Context } from "@opencode/plugin/promise/plugin";
 
 import {
@@ -19,7 +19,7 @@ import {
 import { enhanceModelInfo, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
 import { applyModelInfoDraft, materializeModelInfo, modelInfoDraft } from "./model.js";
 import { buildProviderConfig } from "./provider.js";
-import { errorMessage, safeLog } from "./utils.js";
+import { errorMessage, fillMissingFields, safeLog } from "./utils.js";
 import type {
   LiteLLMModelInfoEntry,
   DiscoveredModelInfo,
@@ -293,10 +293,17 @@ export async function discoverProviderModels(
       }
     }
 
+    const configuredModels = provider.models;
     provider.models = {
       ...discovered.models,
-      ...provider.models,
+      ...configuredModels,
     };
+    if (pluginOptions.enrichExistingModels === true) {
+      for (const [id, configured] of Object.entries(configuredModels ?? {})) {
+        const model = discovered.models?.[id];
+        if (model) provider.models[id] = fillMissingFields(configured, model);
+      }
+    }
     addMaxCompletionTokensTransform(provider, discoveredEntries);
     await safeLog(log, "info", `Discovered ${discoveredEntries.length} usable model(s) for provider "${providerID}"`);
   } catch (error) {
@@ -334,7 +341,10 @@ export async function applyDiscovery(
 
 export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
   const log: Logger = (level, message) => console[level](`[opencode-model-discovery] ${message}`);
-  const discoveredModels = new Map<string, Map<string, Model.Info>>();
+  const discoveredModels = new Map<string, {
+    models: Map<string, DiscoveredModelInfo>;
+    enrichExistingModels: boolean;
+  }>();
   const discoveryStarted = new Set<string>();
 
   // This cleanup is independent of discovery. It can run before configured
@@ -370,7 +380,10 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
         if (provider.models) {
           discoveredModels.set(
             providerID,
-            new Map(modelsToV2(providerID, provider.models).map((model) => [model.id, model])),
+            {
+              models: modelDraftsToV2(provider.models),
+              enrichExistingModels: pluginOptions.enrichExistingModels === true,
+            },
           );
         }
         await ctx.model.reload();
@@ -379,16 +392,21 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<void> => {
       });
     }
 
-    for (const [providerID, models] of discoveredModels) {
+    for (const [providerID, { models, enrichExistingModels }] of discoveredModels) {
       const provider = editor.provider.get(providerID);
       if (!provider) continue;
       for (const [modelID, discoveredModel] of models) {
         // ProviderRecord.models is the configured source inventory. Do not
         // use ModelEditor.get() here: it resolves a candidate and therefore
         // is not a reliable indication that the user configured an override.
-        if (provider.models.has(modelID)) continue;
+        const existing = provider.models.has(modelID);
+        if (existing && !enrichExistingModels) continue;
         editor.update(providerID, modelID, (model) => {
-          Object.assign(model, discoveredModel);
+          // Update callbacks expose raw overrides. Merge before runtime defaults
+          // so a name-only entry can acquire limits, capabilities and pricing.
+          Object.assign(model, existing
+            ? fillMissingFields(model, discoveredModel)
+            : materializeModelInfo(providerID, modelID, discoveredModel));
         });
       }
     }
@@ -402,15 +420,14 @@ function providerFromV2(info: Pick<Provider.Info, "id" | "name" | "settings">): 
   };
 }
 
-function modelsToV2(
-  providerID: string,
+function modelDraftsToV2(
   models: Record<string, OpenCodeModelEntry>,
-): Array<Model.Info> {
-  return Object.entries(models).map(([id, entry]) => {
+): Map<string, DiscoveredModelInfo> {
+  return new Map(Object.entries(models).map(([id, entry]) => {
     const model = { ...(runtimeDrafts.get(entry) ?? modelInfoDraft(entry)) };
     if ((entry as Record<PropertyKey, unknown>)[MAX_COMPLETION_TOKENS] === true) {
       model.compatibility = { ...model.compatibility, maxTokensField: "max_completion_tokens" };
     }
-    return materializeModelInfo(providerID, id, model);
-  });
+    return [id, model];
+  }));
 }

@@ -212,6 +212,46 @@ describe("applyDiscovery", () => {
     expect(providerFor(config, "litellm").models?.["llama3.1:8b"]?.name).toBe("My Llama");
   });
 
+  it.each([true, false, undefined])("enriches configured models only when enrichExistingModels is true (%s)", async (enrichExistingModels) => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => Response.json(
+      input.toString().includes("/models")
+        ? { data: [{ id: "gpt-4o" }, { id: "new-model" }] }
+        : { data: [{ model_name: "gpt-4o", litellm_params: {}, model_info: {
+          max_input_tokens: 128000, max_output_tokens: 16384,
+          input_cost_per_token: 0.000002, output_cost_per_token: 0.000008,
+          cache_read_input_token_cost: 0.000001,
+          supports_function_calling: true, supports_reasoning: true, supports_vision: true,
+        } }] },
+    ));
+    const manual = {
+      name: "My GPT", tool_call: false, reasoning: false,
+      limit: { context: 64000, output: 0 },
+      cost: { input: 0, output: 4 },
+      modalities: { input: [] as [], output: [] as [] },
+      options: { reasoningSummary: null },
+    };
+    const config: OpenCodeConfig = { provider: { gateway: {
+      options: { baseURL: "https://llm.example.com/v1", "opencode-model-discovery": {
+        discovery: true, enrichExistingModels,
+      } },
+      models: { "gpt-4o": manual, "manual-only": { name: "Manual only" } },
+    } } };
+
+    await applyDiscovery(config);
+
+    const provider = providerFor(config, "gateway");
+    expect(provider.models?.["gpt-4o"]).toEqual(enrichExistingModels ? {
+      ...manual, attachment: true,
+      limit: { ...manual.limit, input: 128000 },
+      cost: { ...manual.cost, cache_read: 1 },
+    } : manual);
+    expect(manual.limit).toEqual({ context: 64000, output: 0 });
+    expect(manual.cost).toEqual({ input: 0, output: 4 });
+    expect(provider.models?.["manual-only"]).toEqual({ name: "Manual only" });
+    expect(provider.models?.["new-model"]).toEqual({ name: "New Model" });
+    expect(provider.options).not.toHaveProperty("opencode-model-discovery");
+  });
+
   it("keeps basic discovery when detailed model info fails", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       if (input.toString().includes("/model/info")) {
@@ -789,6 +829,87 @@ describe("applyDiscovery", () => {
 
 describe("ModelDiscoveryPlugin", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it.each([true, false, undefined])("preserves raw overrides while enriching existing runtime models (%s)", async (enrichExistingModels) => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://models.dev/models.json") {
+        return Response.json({ "lab/model-a": {
+          id: "lab/model-a", name: "Model A", description: "Test model",
+          family: "gpt", tool_call: true, reasoning: true,
+          limit: { context: 128000, output: 16384 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        } });
+      }
+      return Response.json(input.toString().includes("/models")
+        ? { data: [{ id: "model-a" }, { id: "new-model" }] }
+        : { data: [{ model_name: "model-a", litellm_params: {}, model_info: {
+          supported_openai_params: ["max_completion_tokens"],
+          input_cost_per_token: 0.000002, output_cost_per_token: 0.000008,
+        } }] });
+    }));
+    let transform: Parameters<Context["model"]["transform"]>[0] | undefined;
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const providerRecord = {
+      provider: { id: "gateway", name: "Gateway", settings: {
+        baseURL: "https://llm.example.com/v1",
+        "opencode-model-discovery": { discovery: true, enrichExistingModels, enhanceFromModelsDev: true },
+      } },
+      models: new Map([["model-a", { name: "Custom" }], ["manual-only", { name: "Manual only" }]]),
+    };
+    const ctx = {
+      provider: { transform: vi.fn() },
+      model: { transform: vi.fn(async (cb) => { transform = cb; }), reload },
+      storage: createMemoryStorage(),
+    } as unknown as Context;
+    await ModelDiscoveryPlugin(ctx);
+
+    let configured: Record<string, unknown> = { name: "Custom" };
+    const updated = new Map<string, Record<string, unknown>>();
+    const editor = {
+      provider: { list: () => [providerRecord], get: () => providerRecord },
+      update: vi.fn((_providerID: string, id: string, cb: (draft: Record<string, unknown>) => void) => {
+        const draft = id === "model-a" ? structuredClone(configured) : { id };
+        cb(draft);
+        updated.set(id, draft);
+      }),
+    };
+    transform?.(editor as never);
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    transform?.(editor as never);
+
+    expect(updated.has("manual-only")).toBe(false);
+    expect(updated.has("new-model")).toBe(true);
+    if (enrichExistingModels !== true) {
+      expect(updated.has("model-a")).toBe(false);
+      return;
+    }
+    expect(updated.get("model-a")).toMatchObject({
+      name: "Custom", family: "gpt",
+      capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+      limit: { context: 128000, output: 16384 },
+      compatibility: { reasoningField: "reasoning_content", maxTokensField: "max_completion_tokens" },
+      cost: [{ input: 2, output: 8 }],
+    });
+    // A replay uses the current raw overrides and must preserve explicit empty/false values.
+    configured = {
+      name: "", capabilities: { tools: false, input: [] }, limit: { output: 0 },
+      compatibility: { maxTokensField: "max_tokens" }, cost: [],
+      settings: { custom: null }, enabled: false,
+    };
+    transform?.(editor as never);
+    const expected = {
+      ...configured, family: "gpt",
+      capabilities: { tools: false, input: [], output: ["text"] },
+      limit: { context: 128000, output: 0 },
+      compatibility: { maxTokensField: "max_tokens", reasoningField: "reasoning_content" },
+    };
+    expect(updated.get("model-a")).toEqual(expected);
+    transform?.(editor as never);
+    expect(updated.get("model-a")).toEqual(expected);
+    expect(configured.limit).toEqual({ output: 0 });
+    expect(providerRecord.models.get("model-a")).toEqual({ name: "Custom" });
+    expect(reload).toHaveBeenCalledOnce();
+  });
 
   it("uses ctx.storage and enriches typed runtime models before applying defaults", async () => {
     const storage = createMemoryStorage();
