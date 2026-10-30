@@ -1,7 +1,7 @@
 import { Models } from "@opencode-ai/models";
 import { Model } from "@opencode/plugin";
 
-import { loadModelsDevSnapshot } from "./models-dev-snapshot.js";
+import { loadModelsDevSnapshot } from "./models-dev-snapshot.ts";
 import type {
   Logger,
   ModelsDevData,
