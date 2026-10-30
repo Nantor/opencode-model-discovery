@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Provider } from "@opencode/plugin";
+import { Model, Provider } from "@opencode/plugin";
 import type { Context } from "@opencode/plugin/promise/plugin";
 
 import {
@@ -514,9 +514,14 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> =>
               fillMissingFields(overrides, discoveredModel), source,
             ));
           } else {
-            // Without a source, all existing raw fields are explicit earlier
-            // transform edits. Fill gaps only; the host applies defaults later.
-            Object.assign(model, fillMissingFields(model, discoveredModel));
+            // V2.2.3 creates source-less drafts with Model.Info.default() before
+            // this callback. Preserve visible earlier edits, not host defaults.
+            // Equal-to-default edits have no distinguishable provenance here.
+            const defaults = Model.Info.default(Provider.ID.make(providerID), Model.ID.make(modelID));
+            const overrides = sourceModelOverrides(model, defaults);
+            Object.assign(model, fillMissingFields(
+              fillMissingFields(overrides, discoveredModel), defaults,
+            ));
           }
         });
       }

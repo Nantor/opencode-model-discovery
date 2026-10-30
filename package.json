@@ -26,6 +26,7 @@
     "lint:fix": "eslint src --fix",
     "test": "vitest src scripts",
     "test:run": "vitest run src scripts",
+    "test:host": "npm run build && node scripts/host-smoke.mjs",
     "debug:provider": "node scripts/debug-provider.ts",
     "deploy:local": "node scripts/deploy-local.mjs",
     "prepublishOnly": "npm run lint && npm run test:run && npm run build"

@@ -55,7 +55,7 @@ function modelCost(cost: OpenCodeModelCost): Model.Cost {
   };
 }
 
-/** Apply runtime defaults only after discovery and catalog enrichment. */
+/** Materialize a discovery draft for helpers/tests; host callbacks already have defaults. */
 export function materializeModelInfo(providerID: string, id: string, draft: DiscoveredModelInfo): Model.Info {
   const defaults = Model.Info.default(Provider.ID.make(providerID), Model.ID.make(id));
   return {

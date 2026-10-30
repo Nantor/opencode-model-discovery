@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Model, Provider } from "@opencode/plugin";
 import type { Context } from "@opencode/plugin/promise/plugin";
 import { createMemoryStorage, type Storage } from "./cache.js";
 import { ModelDiscoveryPlugin } from "./plugin.js";
@@ -67,7 +68,7 @@ async function harness(order: "earlier" | "later" = "earlier", storage: Storage 
     transform?.({
       provider: { list: () => providers, get: (id: string) => providers.find((s) => s.provider.id === id) },
       update: (providerID: string, id: string, update: (draft: Record<string, unknown>) => void) => {
-        const draft = {};
+        const draft = structuredClone(Model.Info.default(Provider.ID.make(providerID), Model.ID.make(id)));
         update(draft);
         output.set(`${providerID}/${id}`, draft);
       },

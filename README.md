@@ -124,11 +124,11 @@ For a source-backed model with visible overrides, `enrichExistingModels: false` 
 
 **V2 provenance limitation:** the editor exposes source definitions and current model drafts, not original user configuration. The plugin identifies visible overrides by comparing the draft with its source. An override already folded into a source, or equal to its source value, cannot be distinguished from inheritance and may be refreshed. OpenCode's later configuration transform applies actual configured values afterward, so those values win regardless of this setting; a config entry first applied later cannot trigger the earlier whole-model skip. The exported config-style helpers receive actual configured entries and therefore preserve those entries directly.
 
-For models without a source definition, existing raw fields from earlier model transforms win regardless of `enrichExistingModels`; discovery fills missing fields and the host supplies defaults afterward.
+For models without a source definition, OpenCode 2.2.3 supplies `Model.Info.default()` **before** the model-update callback. The plugin compares the current draft with those defaults: visible earlier edits win regardless of `enrichExistingModels`, discovery replaces reported default fields, and unreported fields retain host defaults. This preserves, for example, an earlier `enabled: false`, custom name, or custom output limit while adding discovered context, capabilities, and pricing. Earlier assignments equal to host defaults (such as `tools: true`, `cost: []`, or an output limit of `32000`) cannot be distinguished from untouched defaults and may be refreshed. Later native model configuration still wins, including equal-to-default values.
 
 ## models.dev Enhancement
 
-LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, token limits, or complete input/output capabilities. Set `enhanceFromModelsDev` to `true` to fill those non-pricing gaps directly from `https://models.dev/models.json`, fetched using the official `@opencode-ai/models` client. Enrichment uses OpenCode's `Model.Info` types and maps tool calling, modalities, and reasoning compatibility to runtime fields before the host applies defaults. This plugin does not copy catalog `temperature`, `attachment`, `knowledge`, or release-date fields. The plugin does not read OpenCode's cached catalog. Pricing is never copied from this catalog:
+LiteLLM's `/v2/model/info` does not always report every field OpenCode understands, such as `family`, token limits, or complete input/output capabilities. Set `enhanceFromModelsDev` to `true` to fill those non-pricing gaps directly from `https://models.dev/models.json`, fetched using the official `@opencode-ai/models` client. Enrichment uses OpenCode's `Model.Info` types and maps tool calling, modalities, and reasoning compatibility into partial discovery fields before merging them with the host's model drafts. This plugin does not copy catalog `temperature`, `attachment`, `knowledge`, or release-date fields. The plugin does not read OpenCode's cached catalog. Pricing is never copied from this catalog:
 
 ```json
 {
@@ -208,6 +208,16 @@ The variant is selected by esbuild's `define` option in `scripts/build.mjs`: `BU
 ```bash
 npm run deploy:local                 # slim (default)
 npm run deploy:local -- --variant=fallback
+```
+
+## Verification
+
+Run `npm run test:run`, `npm run lint`, and `npm run build` for unit tests, lint, typechecking, and both bundles. Run `npm run test:host` for the actual-host regression: it builds the plugin, starts isolated OpenCode **2.2.3** private servers with synthetic loopback HTTP discovery, and checks new/source-backed models, partial metadata, earlier policy edits, and later native configuration. HOME, XDG directories, and databases are isolated; the shared service is not used. Artifacts are retained under `/tmp/opencode/model-discovery-host-*` (`OPENCODE_SMOKE_TMP` overrides the parent).
+
+The smoke test requires the supported CLI version and fails on a version mismatch. To use a separate pinned binary:
+
+```bash
+OPENCODE_SMOKE_BINARY=/path/to/opencode-2.2.3 npm run test:host
 ```
 
 ## License

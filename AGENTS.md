@@ -13,6 +13,7 @@ npm run lint         # eslint src
 npm run lint:fix     # eslint src --fix
 npm run test         # vitest src scripts (watch)
 npm run test:run     # vitest run src scripts
+npm run test:host    # build + actual OpenCode 2.2.3 smoke (OPENCODE_SMOKE_BINARY overrides CLI)
 npm run debug:provider -- <provider-id> # query V2 config/runtime APIs and discovery endpoints
 ```
 
@@ -20,7 +21,7 @@ npm run debug:provider -- <provider-id> # query V2 config/runtime APIs and disco
 
 V2 entrypoint: `src/index.ts` defaults to `Plugin.define({ id, setup: ModelDiscoveryPlugin })`. Setup in `src/plugin.ts` registers synchronous provider/model transforms and returns unload cleanup. `scripts/build.mjs` bundles `dist/opencode-model-discovery.js` (default export target, with catalog snapshot fallback) and `dist/opencode-model-discovery-slim.js` (without snapshot). Both are Node 24 ESM bundles.
 
-Flow: provider transform captures plugin settings and cleans provider drafts -> model transform reads provider sources and starts asynchronous discovery -> fetches `GET /v1/models?return_wildcard_routes=true` and optional `GET /v2/model/info?return_wildcard_routes=true` -> filters endpoint-only modes -> optionally enhances from models.dev -> stores partial V2 model drafts -> calls `ctx.model.reload()` to publish them on replay. The host supplies defaults after transforms. Discovery cannot activate an unavailable provider.
+Flow: provider transform captures plugin settings and cleans provider drafts -> model transform reads provider sources and starts asynchronous discovery -> fetches `GET /v1/models?return_wildcard_routes=true` and optional `GET /v2/model/info?return_wildcard_routes=true` -> filters endpoint-only modes -> optionally enhances from models.dev -> stores partial V2 model drafts -> calls `ctx.model.reload()` to publish them on replay. OpenCode 2.2.3 initializes new model callbacks with `Model.Info.default()`; discovery replaces reported defaults while retaining visible earlier edits and unreported defaults. Discovery cannot activate an unavailable provider.
 
 Module map:
 
@@ -51,7 +52,7 @@ Native V2 configuration uses `providers.<id>.settings["opencode-model-discovery"
 
 Provider/model transforms replay in registration order. If a provider source or edit arrives after cleanup, `src/provider-settings.ts` replaces its cleanup registration after that source. This relies on provider invalidation causing model reconciliation, and on the host preserving the cleaned settings reference into provider snapshots. A provider-only read before reconciliation can expose plugin settings; already-returned snapshots are never repaired retroactively. There is no post-provider cleanup hook in the installed API.
 
-Inherited source models receive discovered fields; source presence is not user-config provenance. Visible overrides are draft fields differing from source: with enrichment disabled they skip that source-backed model, and with enrichment enabled they win over discovery, then source. For models without a source, earlier raw draft edits win and discovery fills gaps. Equal-to-source or source-folded overrides cannot be identified. The host's later configuration transform still wins; entries first applied there cannot cause an earlier whole-model skip.
+Inherited source models receive discovered fields; source presence is not user-config provenance. Visible overrides are draft fields differing from source: with enrichment disabled they skip that source-backed model, and with enrichment enabled they win over discovery, then source. For models without a source, fields differing from `Model.Info.default()` win over discovery regardless of enrichment; discovery wins over remaining host defaults. Equal-to-default earlier edits (including `cost: []` and `tools: true`), equal-to-source edits, or source-folded overrides cannot be identified. The host's later configuration transform still wins, including equal-value settings; entries first applied there cannot cause an earlier whole-model skip.
 
 ### Lifecycle and cache
 
@@ -63,7 +64,7 @@ Durable cache entries use `discovery:v2:` with hashed endpoint/header identity a
 
 ### API and verification boundary
 
-The lockfile currently installs `@opencode/plugin`, `@opencode/schema`, and `@opencode/ai` 2.2.3. Inspect the installed declarations/encoder when changing integration behavior; current online V2 docs may describe newer APIs. Lifecycle tests replay simulated editors, not a live OpenCode server. F07 cleanup convergence and F08 provenance remain subject to the host boundaries above.
+The lockfile currently installs `@opencode/plugin`, `@opencode/schema`, and `@opencode/ai` 2.2.3. Inspect the installed implementation as well as declarations/encoder when changing integration behavior: the raw-override documentation does not mean callbacks receive empty models. Lifecycle tests replay simulated editors. `npm run test:host` additionally verifies new/source-backed metadata, partial fields, earlier policy edits and later native config in a real 2.2.3 private server, using isolated HOME/XDG/database paths and loopback HTTP. It retains artifacts under `/tmp/opencode/model-discovery-host-*` (override with `OPENCODE_SMOKE_TMP`) and requires the exact supported CLI version. F07 cleanup convergence and F08 provenance remain subject to the host boundaries above.
 
 ## ESLint conventions
 

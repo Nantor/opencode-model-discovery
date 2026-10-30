@@ -13,7 +13,7 @@ type Draft = Parameters<Parameters<ModelEditor["update"]>[2]>[0];
 describe("V2 composed model transforms for new inventory", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it.each([undefined, false, true])("preserves earlier raw edits and later config without injecting defaults (enrich: %s)", async (enrichExistingModels) => {
+  it.each([undefined, false, true])("replaces host defaults while preserving visible earlier edits and later config (enrich: %s)", async (enrichExistingModels) => {
     const providerID = Provider.ID.make("gateway");
     const source = {
       provider: { ...Provider.Info.empty(providerID), settings: {
@@ -23,16 +23,17 @@ describe("V2 composed model transforms for new inventory", () => {
       models: new Map<string, Model.Info>(),
     };
     const metadata = { max_input_tokens: 8192, max_output_tokens: 1024,
-      supports_vision: true, supports_function_calling: true, supports_reasoning: true,
+      supports_vision: false, supports_function_calling: false, supports_reasoning: true,
       supported_openai_params: ["max_tokens"],
       input_cost_per_token: 0.000002, output_cost_per_token: 0.000004 };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json({ data: url.includes("/models")
-      ? [{ id: "m" }, { id: "detailed" }, { id: "untouched" }]
-      : [{ model_name: "detailed", litellm_params: {}, model_info: metadata }] })));
+      ? ["m", "detailed", "untouched", "fresh-model", "partial", "equal-defaults"].map((id) => ({ id }))
+      : ["detailed", "fresh-model", "equal-defaults"].map((model_name) => ({ model_name, litellm_params: {}, model_info: metadata }))
+        .concat([{ model_name: "partial", litellm_params: {}, model_info: { max_output_tokens: 512 } }]) })));
 
     const policy = {
       enabled: false, name: "Policy name", limit: { output: 123 },
-      capabilities: { tools: false, input: [] }, cost: [],
+      capabilities: { tools: false, input: [] }, cost: [{ input: 7, output: 9, cache: { read: 0, write: 0 } }],
       compatibility: { maxTokensField: "max_completion_tokens" },
       settings: { generation: { temperature: 0 }, custom: { disabled: false, nullable: null, list: [] } },
     };
@@ -53,8 +54,8 @@ describe("V2 composed model transforms for new inventory", () => {
         list: () => [...raw.values()], get: (_providerID, id) => raw.get(id),
         update: (pID, id, cb) => {
           if (pID !== providerID) return;
-          // New models start as raw overrides, not Model.Info.default().
-          const draft = raw.get(id) ?? {} as Draft;
+          // Actual V2.2.3 initializes defaults BEFORE the callback.
+          const draft = raw.get(id) ?? structuredClone(Model.Info.default(providerID, Model.ID.make(id)));
           cb(draft);
           raw.set(id, draft);
         },
@@ -62,10 +63,7 @@ describe("V2 composed model transforms for new inventory", () => {
         default: { get: () => undefined, set: () => {} },
       };
       modelTransforms.forEach((transform) => transform(editor));
-      // Commit only after every callback, as required by the host contract.
-      return new Map([...raw].map(([id, draft]) => [id,
-        fillMissingFields(draft, Model.Info.default(providerID, Model.ID.make(id))),
-      ]));
+      return new Map(raw);
     };
     const reload = vi.fn(async () => { replay(); });
     const ctx = {
@@ -80,6 +78,11 @@ describe("V2 composed model transforms for new inventory", () => {
       for (const id of ["m", "detailed"]) {
         editor.update(providerID, id, (draft) => Object.assign(draft, structuredClone(policy)));
       }
+      editor.update(providerID, "equal-defaults", (draft) => {
+        draft.limit.output = 32000;
+        draft.capabilities.tools = true;
+        draft.cost = [];
+      });
     });
     await ctx.model.transform(earlier);
     const cleanup = await ModelDiscoveryPlugin(ctx);
@@ -94,17 +97,31 @@ describe("V2 composed model transforms for new inventory", () => {
       replay();
       await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
       const models = replay();
-      expect(raw.get("m")).toEqual(policy);
       expect(models.get("m")).toMatchObject({ ...policy, limit: { context: 200000, output: 123 } });
-      expect(raw.get("detailed")).toEqual({
+      expect(raw.get("detailed")).toMatchObject({
         ...policy, limit: { context: 8192, input: 8192, output: 123 },
         compatibility: { maxTokensField: "max_completion_tokens", reasoningField: "reasoning_content" },
       });
-      expect(raw.get("untouched")).toEqual({ name: "Untouched" });
+      expect(raw.get("untouched")).toMatchObject({ name: "Untouched" });
       expect(models.get("untouched")).toMatchObject({
         enabled: true, limit: { context: 200000, output: 32000 },
         capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
       });
+      for (const id of ["fresh-model", "equal-defaults"]) {
+        expect(models.get(id)).toMatchObject({
+          name: id === "fresh-model" ? "Fresh Model" : "Equal Defaults",
+          limit: { context: 8192, input: 8192, output: 1024 },
+          capabilities: { tools: false, input: ["text"], output: ["text"] },
+          cost: [{ input: 2, output: 4 }],
+          compatibility: { maxTokensField: "max_tokens" },
+        });
+      }
+      // Unreported fields retain host defaults, independently of reported limits.
+      expect(models.get("partial")).toMatchObject({
+        limit: { context: 200000, output: 512 },
+        capabilities: { tools: true, input: ["text", "image"], output: ["text"] }, cost: [],
+      });
+      expect(models.get("partial")?.limit.input).toBeUndefined();
       expect(replay()).toEqual(models);
 
       // Config's later transform still has final precedence over policy/discovery.
