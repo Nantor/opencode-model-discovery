@@ -1,6 +1,25 @@
 import { Model, Provider } from "@opencode/plugin";
+import { isDeepStrictEqual } from "node:util";
 import type { DiscoveredModelInfo, LiteLLMModelInfo, OpenCodeModelCost, OpenCodeModelEntry } from "./types.js";
 import { modelModalityDraft } from "./provider.js";
+
+/** Visible overrides only: source definitions carry no user-config provenance. */
+export function sourceModelOverrides(model: object, source: object): Record<string, unknown> {
+  const sourceFields = source as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(model).flatMap(([key, value]) => {
+    const inherited = sourceFields[key];
+    if (value === undefined || isDeepStrictEqual(value, inherited)) return [];
+    if (isRecord(value) && isRecord(inherited)) {
+      const nested = sourceModelOverrides(value, inherited);
+      return Object.keys(nested).length ? [[key, nested]] : [];
+    }
+    return [[key, value]];
+  }));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
+}
 
 /** Convert the legacy public API shape into an OpenCode discovery draft. */
 export function modelInfoDraft(entry: OpenCodeModelEntry, info?: LiteLLMModelInfo): DiscoveredModelInfo {

@@ -28,7 +28,7 @@ Add the plugin and enable discovery on each provider that should be queried:
 }
 ```
 
-The plugin fetches `/v1/models?return_wildcard_routes=true` when OpenCode starts and enriches matching models with metadata from `/v2/model/info?return_wildcard_routes=true`. Manually configured model entries take precedence over discovered entries. Provider model IDs are used unchanged as model keys, including spaces and punctuation. Models whose LiteLLM `mode` cannot serve chat completions (embedding, image and video generation, audio, moderation, rerank, OCR, realtime, batch) are skipped.
+The plugin fetches `/v1/models?return_wildcard_routes=true` when OpenCode starts and enriches matching models with metadata from `/v2/model/info?return_wildcard_routes=true`. OpenCode's later configuration overrides take precedence over discovered fields; see [enrichment precedence and V2 provenance limitations](#enrich-existing-models). Provider model IDs are used unchanged as model keys, including spaces and punctuation. Models whose LiteLLM `mode` cannot serve chat completions (embedding, image and video generation, audio, moderation, rerank, OCR, realtime, batch) are skipped.
 
 Model limits map LiteLLM's `max_input_tokens` to `limit.context` and `max_output_tokens` to `limit.output`. LiteLLM's `max_tokens` field is a legacy alias for the output limit and is only used when the dedicated fields are absent.
 
@@ -74,7 +74,7 @@ Configure these settings separately for each provider under `providers.<provider
 | `discoveryBaseURL` | `string` | Provider's `settings.baseURL` | Override the endpoint used for discovery and metadata requests. May include `/v1`; inference still uses the required provider `baseURL`. |
 | `discoveryTimeout` | `number` | `10000` | Timeout in milliseconds for discovery and metadata requests. Must be finite and non-negative; invalid values use the default. |
 | `discoveryCache` | `string` | Disabled | Cache model lists and metadata in OpenCode plugin storage for a positive ISO 8601 duration, such as `"PT1H"`, `"P1D"`, or `"P2W"`. Invalid or zero durations disable caching; months and years are not supported. |
-| `enrichExistingModels` | `boolean` | `false` | Fill missing fields on existing models with discovered metadata (and models.dev metadata when enabled). Manually configured values always win, including nested fields. |
+| `enrichExistingModels` | `boolean` | `false` | Enrich models with visible overrides, preserving those values including nested fields. Inherited source models are refreshed regardless. See precedence details below. |
 | `enhanceFromModelsDev` | `boolean` | `false` | Fill missing non-pricing model metadata from models.dev. See [models.dev Enhancement](#modelsdev-enhancement) for matching and fallback behavior. |
 | `modelsDevIgnorePrefixes` | `string[]` | `[]` | Remove the longest matching literal prefix once before models.dev lookup, after stripping the provider path. Only applies when enhancement is enabled. |
 | `modelsDevIgnorePostfixes` | `string[]` | `[]` | Remove the longest matching literal postfix once before models.dev lookup. Only applies when enhancement is enabled. |
@@ -96,7 +96,11 @@ Set `enrichExistingModels: true` alongside `discovery: true` in the provider's `
 }
 ```
 
-For example, a model configured with only a custom `name` keeps that name and gains discovered limits, capabilities, and pricing. Nested objects are filled field by field: a configured `limit.output` is preserved while a missing `limit.context` can be enriched. Explicit values such as `false`, `0`, `null`, and arrays (including empty arrays) are preserved; arrays are not combined. Models absent from discovery are left as configured. When this setting is omitted or `false`, existing model entries are skipped as before. Enable `enhanceFromModelsDev` as well to include its non-pricing metadata.
+Inherited catalog and plugin source models receive discovered metadata even when `enrichExistingModels` is omitted or `false`. Discovery replaces reported fields and retains source fields it does not supply. Source inventory membership alone does not mean a model was manually configured.
+
+For a source-backed model with visible overrides, `enrichExistingModels: false` skips discovery changes to that model. With `true`, overrides win over discovery, which wins over inherited source fields. For example, a custom `name` is preserved while discovered limits, capabilities, and pricing are added. Nested objects merge field by field: an overridden `limit.output` is preserved while `limit.context` can be refreshed. Values such as `false`, `0`, `null`, and arrays (including empty arrays) are preserved; arrays are not combined. Models absent from discovery are left as configured. Enable `enhanceFromModelsDev` as well to include its non-pricing metadata.
+
+**V2 provenance limitation:** the editor exposes source definitions and current model drafts, not original user configuration. The plugin identifies visible overrides by comparing the draft with its source. An override already folded into a source, or equal to its source value, cannot be distinguished from inheritance and may be refreshed. OpenCode's later configuration transform applies actual configured values afterward, so those values win regardless of this setting; a config entry first applied later cannot trigger the earlier whole-model skip. The exported config-style helpers receive actual configured entries and therefore preserve those entries directly.
 
 ## models.dev Enhancement
 

@@ -1100,7 +1100,7 @@ describe("ModelDiscoveryPlugin", () => {
         baseURL: "https://llm.example.com/v1",
         "opencode-model-discovery": { discovery: true, enrichExistingModels, enhanceFromModelsDev: true },
       } },
-      models: new Map([["model-a", { name: "Custom" }], ["manual-only", { name: "Manual only" }]]),
+      models: new Map([["model-a", { name: "Source name" }], ["manual-only", { name: "Manual only" }]]),
     };
     const ctx = {
       provider: { transform: vi.fn(async () => ({ dispose: async () => {} })) },
@@ -1126,7 +1126,7 @@ describe("ModelDiscoveryPlugin", () => {
     expect(updated.has("manual-only")).toBe(false);
     expect(updated.has("new-model")).toBe(true);
     if (enrichExistingModels !== true) {
-      expect(updated.has("model-a")).toBe(false);
+      expect(updated.get("model-a")).toEqual(configured);
       return;
     }
     expect(updated.get("model-a")).toMatchObject({
@@ -1153,7 +1153,7 @@ describe("ModelDiscoveryPlugin", () => {
     transform?.(editor as never);
     expect(updated.get("model-a")).toEqual(expected);
     expect(configured.limit).toEqual({ output: 0 });
-    expect(providerRecord.models.get("model-a")).toEqual({ name: "Custom" });
+    expect(providerRecord.models.get("model-a")).toEqual({ name: "Source name" });
     expect(reload).toHaveBeenCalledOnce();
   });
 

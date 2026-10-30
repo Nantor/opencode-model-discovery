@@ -18,7 +18,7 @@ import {
   isLiteLLMModelInfoEntry,
 } from "./fetch.js";
 import { enhanceModelInfo, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
-import { applyModelInfoDraft, materializeModelInfo, modelInfoDraft } from "./model.js";
+import { applyModelInfoDraft, materializeModelInfo, modelInfoDraft, sourceModelOverrides } from "./model.js";
 import { buildProviderConfig, modelLimitDraft } from "./provider.js";
 import { providerSettings } from "./provider-settings.js";
 import { errorMessage, fillMissingFields, safeLog } from "./utils.js";
@@ -496,17 +496,20 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> =>
       const provider = editor.provider.get(providerID);
       if (!provider) continue;
       for (const [modelID, discoveredModel] of models) {
-        // ProviderRecord.models is the configured source inventory. Do not
-        // use ModelEditor.get() here: it resolves a candidate and therefore
-        // is not a reliable indication that the user configured an override.
-        const existing = provider.models.has(modelID);
-        if (existing && !enrichExistingModels) continue;
+        const source = provider.models.get(modelID);
         editor.update(providerID, modelID, (model) => {
-          // Update callbacks expose raw overrides. Merge before runtime defaults
-          // so a name-only entry can acquire limits, capabilities and pricing.
-          Object.assign(model, existing
-            ? fillMissingFields(model, discoveredModel)
-            : materializeModelInfo(providerID, modelID, discoveredModel));
+          if (source) {
+            // The host draft includes inherited source fields, not just user
+            // config. Only differences are visible overrides; equal-value config
+            // cannot be identified here. Later config transforms still win.
+            const overrides = sourceModelOverrides(model, source);
+            if (Object.keys(overrides).length && !enrichExistingModels) return;
+            Object.assign(model, fillMissingFields(
+              fillMissingFields(overrides, discoveredModel), source,
+            ));
+          } else {
+            Object.assign(model, materializeModelInfo(providerID, modelID, discoveredModel));
+          }
         });
       }
     }

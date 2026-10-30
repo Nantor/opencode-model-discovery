@@ -73,7 +73,7 @@ describe("V2 discovery token parameter encoding", () => {
         baseURL: "https://gateway.example/v1",
         "opencode-model-discovery": { discovery: true, enrichExistingModels },
       } },
-      models: configured,
+      models: new Map([...configured.keys()].map((id) => [id, { name: id }])),
     };
     let transform: Parameters<Context["model"]["transform"]>[0] | undefined;
     const reload = vi.fn().mockResolvedValue(undefined);
