@@ -309,12 +309,12 @@ describe("applyDiscovery", () => {
                 {
                   model_name: "gpt-4o",
                   litellm_params: { model: "upstream-gpt-4o" },
-                  model_info: { max_tokens: 128000, max_output_tokens: 4096 },
+                  model_info: { max_input_tokens: 128000, max_output_tokens: 4096 },
                 },
                 {
                   model_name: "alias",
                   litellm_params: { model: "gpt-4o" },
-                  model_info: { max_tokens: 999, max_output_tokens: 100 },
+                  model_info: { max_input_tokens: 999, max_output_tokens: 100 },
                 },
               ],
             },
@@ -332,6 +332,7 @@ describe("applyDiscovery", () => {
 
     expect(providerFor(config, "gateway").models?.["gpt-4o"]?.limit).toEqual({
       context: 128000,
+      input: 128000,
       output: 4096,
     });
   });
@@ -696,7 +697,7 @@ describe("applyDiscovery", () => {
                     model_name: modelID,
                     litellm_params: { model: modelID },
                     model_info: {
-                      max_tokens: 128000,
+                      max_input_tokens: 128000,
                       max_output_tokens: 16384,
                       litellm_provider: litellmProvider,
                     },
@@ -732,7 +733,7 @@ describe("applyDiscovery", () => {
     expect(model).not.toHaveProperty("temperature");
     expect(model?.cost).toBeUndefined();
     // LiteLLM-derived limit must remain untouched by the enhancement pass.
-    expect(model?.limit).toEqual({ context: 128000, output: 16384 });
+    expect(model?.limit).toEqual({ context: 128000, input: 128000, output: 16384 });
 
     expect(vi.mocked(fetch).mock.calls.some(([url]) => url.toString() === "https://models.dev/models.json"))
       .toBe(true);
@@ -766,6 +767,8 @@ describe("applyDiscovery", () => {
     const entries = [
       { model_name: "output-only", litellm_params: {}, model_info: { max_output_tokens: 1024 } },
       { model_name: "input-only", litellm_params: {}, model_info: { max_input_tokens: "8192" } },
+      { model_name: "output-alias", litellm_params: {}, model_info: { max_tokens: "4096" } },
+      { model_name: "explicit-output", litellm_params: {}, model_info: { max_tokens: 4096, max_output_tokens: 8192 } },
     ];
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -788,6 +791,8 @@ describe("applyDiscovery", () => {
     const models = providerFor(config, "gateway").models;
     expect(models?.["output-only"].limit).toEqual({ context: 128000, input: 120000, output: 1024 });
     expect(models?.["input-only"].limit).toEqual({ context: 8192, input: 8192, output: 16384 });
+    expect(models?.["output-alias"].limit).toEqual({ context: 128000, input: 120000, output: 4096 });
+    expect(models?.["explicit-output"].limit).toEqual({ context: 128000, input: 120000, output: 8192 });
   });
 
   it("enhances discovery from the bundled snapshot when models.dev is unavailable", async () => {
@@ -864,6 +869,9 @@ describe("ModelDiscoveryPlugin", () => {
       { model_name: "input-only", litellm_params: {}, model_info: { max_input_tokens: 8192 } },
       { model_name: "zero-output", litellm_params: {}, model_info: { max_output_tokens: 0 } },
       { model_name: "missing-limits", litellm_params: {}, model_info: {} },
+      { model_name: "output-alias", litellm_params: {}, model_info: { max_tokens: "4096" } },
+      { model_name: "explicit-output", litellm_params: {}, model_info: { max_tokens: 4096, max_output_tokens: 8192 } },
+      { model_name: "zero-with-alias", litellm_params: {}, model_info: { max_tokens: 4096, max_output_tokens: 0 } },
     ];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -912,6 +920,9 @@ describe("ModelDiscoveryPlugin", () => {
     expect(updated.get("input-only")?.limit).toEqual({ ...fallback, context: 8192, input: 8192 });
     expect(updated.get("zero-output")?.limit).toEqual({ ...fallback, output: 0 });
     expect(updated.get("missing-limits")?.limit).toEqual(fallback);
+    expect(updated.get("output-alias")?.limit).toEqual({ ...fallback, output: 4096 });
+    expect(updated.get("explicit-output")?.limit).toEqual({ ...fallback, output: 8192 });
+    expect(updated.get("zero-with-alias")?.limit).toEqual({ ...fallback, output: 0 });
   });
 
   it.each([true, false, undefined])("preserves raw overrides while enriching existing runtime models (%s)", async (enrichExistingModels) => {

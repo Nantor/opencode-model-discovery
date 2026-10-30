@@ -23,11 +23,11 @@ function toPerMillion(perToken: unknown): number | undefined {
 /** Preserve independently reported limits before enrichment or runtime defaults. */
 export function modelLimitDraft(info: LiteLLMModelInfo): DiscoveredModelInfo["limit"] {
   // LiteLLM's `max_tokens` is a legacy alias for `max_output_tokens`, not
-  // the context window. The context window is `max_input_tokens`; fall
-  // back to `max_tokens` only when LiteLLM did not report an input limit.
+  // the context window. Leave context absent when no input limit is reported
+  // so catalog enrichment or runtime defaults can supply it.
   const inputTokens = toNum(info.max_input_tokens);
   const outputTokens = toNum(info.max_output_tokens) ?? toNum(info.max_tokens);
-  const contextTokens = inputTokens ?? toNum(info.max_tokens);
+  const contextTokens = inputTokens;
   if (contextTokens === undefined && outputTokens === undefined) return undefined;
 
   return {

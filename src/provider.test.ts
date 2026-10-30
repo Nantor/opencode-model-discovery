@@ -154,8 +154,8 @@ describe("buildProviderConfig", () => {
     );
     const entry = config.models?.["o1-preview"];
     expect(entry?.reasoning).toBe(true);
-    // limit: context falls back to max_tokens when max_input_tokens absent; no input field
-    expect(entry?.limit).toEqual({ context: 32000, output: 32000 });
+    // An output alias cannot supply the context required by the legacy limit shape.
+    expect(entry?.limit).toBeUndefined();
   });
 
   it("sets interleaved from merge_reasoning_content_in_choices", () => {
@@ -254,10 +254,20 @@ describe("buildProviderConfig", () => {
       "http://localhost:4000",
     );
     const entry = config.models?.["test-model"];
-    // limit is set from max_tokens (fallback) + max_output_tokens; no input field
-    expect(entry?.limit).toEqual({ context: 1000, output: 500 });
+    // Neither output field supplies the missing context window.
+    expect(entry?.limit).toBeUndefined();
     // cost is not set when input_cost_per_token is not a number
     expect(entry?.cost).toBeUndefined();
+  });
+
+  it("uses max_tokens as the output fallback with a reported input limit", () => {
+    const config = buildProviderConfig([
+      { model_name: "test-model", litellm_params: {}, model_info: {
+        max_input_tokens: 128000, max_tokens: "4096",
+      } },
+    ], "http://localhost:4000");
+
+    expect(config.models?.["test-model"]?.limit).toEqual({ context: 128000, input: 128000, output: 4096 });
   });
 
   it("rejects blank, negative, and non-finite numeric metadata", () => {
