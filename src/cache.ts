@@ -126,20 +126,19 @@ export function createMemoryStorage(): Storage {
       store.delete(key);
     },
     async scan({ prefix, after, limit }) {
-      // StorageScanOptions leaves numeric boundaries unspecified. Require a
-      // positive finite integer when supplied so every paginated scan advances;
-      // an omitted limit returns all matches, without a continuation cursor.
-      if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
-        throw new RangeError("Storage scan limit must be a positive finite integer");
-      }
-      // Use the same locale-independent string order for sorting and the
-      // exclusive cursor, even when the cursor key is absent from the store.
+      // Match OpenCode 2.2.3 KV.scan's default and numeric normalization.
+      const size = Number.isNaN(limit) ? 100 : Math.min(Math.max(Math.floor(limit ?? 100), 1), 1000);
+      // SQLite orders UTF-8 keys bytewise, unlike JS's UTF-16 string sort.
+      // Use that order for both sorting and the exclusive (possibly absent) cursor.
+      const cursor = after === undefined ? undefined : Buffer.from(after);
       const keys = [...store.keys()]
-        .filter((key) => key.startsWith(prefix) && (after === undefined || key > after))
-        .sort();
-      const page = limit === undefined ? keys : keys.slice(0, limit);
-      const entries = page.map((key) => ({ key, value: store.get(key) as never }));
-      return keys.length > page.length ? { entries, next: page[page.length - 1] } : { entries };
+        .filter((key) => key.startsWith(prefix))
+        .map((key) => ({ key, bytes: Buffer.from(key) }))
+        .filter(({ bytes }) => cursor === undefined || Buffer.compare(bytes, cursor) > 0)
+        .sort((a, b) => Buffer.compare(a.bytes, b.bytes));
+      const page = keys.slice(0, size);
+      const entries = page.map(({ key }) => ({ key, value: store.get(key) as never }));
+      return keys.length > page.length ? { entries, next: page[page.length - 1].key } : { entries };
     },
   };
 }

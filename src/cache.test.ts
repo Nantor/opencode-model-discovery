@@ -233,10 +233,10 @@ describe("readCache / writeCache with storage", () => {
 describe("createMemoryStorage", () => {
   it.each([1, 2, 3, 6, 10])("traverses every matching entry exactly once with limit %i", async (limit) => {
     const storage = createMemoryStorage();
-    for (const key of ["k:a", "other:1", "k:2", "k:á", "k:10", "other:2", "k:Z", "k:1"]) {
+    for (const key of ["k:a", "other:1", "k:2", "k:á", "k:10", "other:2", "k:Z", "k:1", "k:😀", "k:\uE000", "k:\u{10FFFF}"]) {
       await storage.set(key, { id: key });
     }
-    const expected = ["k:1", "k:10", "k:2", "k:Z", "k:a", "k:á"];
+    const expected = ["k:1", "k:10", "k:2", "k:Z", "k:a", "k:á", "k:\uE000", "k:😀", "k:\u{10FFFF}"];
     const seen: string[] = [];
     let after: string | undefined;
     // Bound the loop so a repeated/non-advancing cursor fails rather than hangs.
@@ -269,7 +269,7 @@ describe("createMemoryStorage", () => {
     await expect(storage.scan({ ...options, after: "z:" })).resolves.toEqual({ entries: [] });
   });
 
-  it("returns all sorted matches without a limit and treats an empty prefix/cursor literally", async () => {
+  it("returns a short final page and treats an empty prefix/cursor literally", async () => {
     const storage = createMemoryStorage();
     await expect(storage.scan({ prefix: "", limit: 1 })).resolves.toEqual({ entries: [] });
     for (const key of ["b", "", "a"]) await storage.set(key, key);
@@ -285,11 +285,27 @@ describe("createMemoryStorage", () => {
     await expect(storage.scan({ prefix: "missing", limit: 1 })).resolves.toEqual({ entries: [] });
   });
 
-  it.each([0, -1, 0.5, 1.5, NaN, Infinity, -Infinity])("rejects invalid page limit %s", async (limit) => {
+  it.each([
+    [undefined, 100], [0, 1], [-1, 1], [0.5, 1], [2.9, 2],
+    [NaN, 100], [Infinity, 1000], [-Infinity, 1], [1001, 1000], [1000, 1000],
+  ])("matches host pagination for limit %s (page size %s)", async (limit, size) => {
     const storage = createMemoryStorage();
-    await expect(storage.scan({ prefix: "", limit })).rejects.toThrow(RangeError);
-    await storage.set("key", "value");
-    await expect(storage.scan({ prefix: "", limit })).rejects.toThrow(RangeError);
+    await expect(storage.scan({ prefix: "", limit })).resolves.toEqual({ entries: [] });
+    const keys = Array.from({ length: 1105 }, (_, i) => `k:${String(i).padStart(4, "0")}`);
+    for (const key of [...keys].reverse()) await storage.set(key, key);
+    await storage.set("other", "excluded");
+    const seen: string[] = [];
+    let after: string | undefined;
+    for (let count = 0; count <= keys.length; count++) {
+      const page = await storage.scan({ prefix: "k:", after, ...(limit === undefined ? {} : { limit }) });
+      expect(page.entries).toEqual(keys.slice(seen.length, seen.length + size!)
+        .map((key) => ({ key, value: key })));
+      seen.push(...page.entries.map(({ key }) => key));
+      expect(page.next).toBe(seen.length < keys.length ? seen[seen.length - 1] : undefined);
+      if (page.next === undefined) break;
+      after = page.next;
+    }
+    expect(seen).toEqual(keys);
   });
 
   it("supports get, set, remove, and scan operations", async () => {

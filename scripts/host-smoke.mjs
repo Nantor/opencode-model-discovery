@@ -88,6 +88,8 @@ try {
     await writeFile(join(cwd, "stdout.txt"), output.stdout);
     await writeFile(join(cwd, "stderr.txt"), output.stderr);
     const data = JSON.parse(await readFile(result, "utf8"));
+    assert.ok(data.storageParity.scans > 500, "Actual host/memory storage comparisons completed");
+    console.log(`PASS OpenCode 2.2.3: ${data.storageParity.scans} storage pagination parity checks`);
     // The host installs its configuration transform after plugin setup returns.
     const finalModels = JSON.parse(output.stdout).data;
     for (const enrich of [false, true]) {

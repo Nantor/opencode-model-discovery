@@ -42,7 +42,7 @@ Limits: `max_input_tokens` supplies `limit.context` and `limit.input`; `max_outp
 - `ModelDiscoveryPlugin(ctx)`: asynchronous V2 setup; resolves to an unload cleanup function.
 - `applyDiscovery(config, log?, storage?)`: mutates the legacy `config.provider` / provider `options` shape, not native V2 `providers` / `settings`.
 - `discoverProviderModels(providerID, provider, log?, storage?, lifecycle?)`: mutates one legacy-shaped provider; V2 setup uses it with a temporary wrapper and internal cancellation/fingerprint context.
-- `createMemoryStorage()` and type `Storage`: in-memory implementation of the V2 plugin storage contract, including prefix/cursor pagination; production uses `ctx.storage`.
+- `createMemoryStorage()` and type `Storage`: in-memory implementation of the V2 plugin storage contract; production uses `ctx.storage`. Scans match 2.2.3 pagination: omitted/NaN limits default to 100, numeric limits are floored and clamped to 1–1000, UTF-8 byte ordering applies to keys and exclusive cursors, and `next` is returned only when more matching entries remain.
 
 The config-style helpers are a compatibility boundary, not V2 hooks. Their models use legacy fields such as `tool_call`, `modalities`, and complete `limit` objects; they cannot expose all partial V2 metadata. Their `transformRequestBody` shim is for the legacy AI SDK path and is not installed into V2 runtime settings. Actual configured entries win in those helpers; `enrichExistingModels` fills their missing fields.
 
@@ -64,7 +64,7 @@ Durable cache entries use `discovery:v2:` with hashed endpoint/header identity a
 
 ### API and verification boundary
 
-The lockfile currently installs `@opencode/plugin`, `@opencode/schema`, and `@opencode/ai` 2.2.3. Inspect the installed implementation as well as declarations/encoder when changing integration behavior: the raw-override documentation does not mean callbacks receive empty models. Lifecycle tests replay simulated editors. `npm run test:host` additionally verifies new/source-backed metadata, partial fields, earlier policy edits and later native config in a real 2.2.3 private server, using isolated HOME/XDG/database paths and loopback HTTP. It retains artifacts under `/tmp/opencode/model-discovery-host-*` (override with `OPENCODE_SMOKE_TMP`) and requires the exact supported CLI version. F07 cleanup convergence and F08 provenance remain subject to the host boundaries above.
+The lockfile currently installs `@opencode/plugin`, `@opencode/schema`, and `@opencode/ai` 2.2.3. Inspect the installed implementation as well as declarations/encoder when changing integration behavior: the raw-override documentation does not mean callbacks receive empty models. Lifecycle tests replay simulated editors. `npm run test:host` additionally verifies new/source-backed metadata, partial fields, earlier policy edits, later native config, and memory/host storage pagination parity in a real 2.2.3 private server, using isolated HOME/XDG/database paths and loopback HTTP. Storage checks cover numeric limit boundaries, full traversal, literal prefixes, deleted/absent cursors, and Unicode ordering. It retains artifacts under `/tmp/opencode/model-discovery-host-*` (override with `OPENCODE_SMOKE_TMP`) and requires the exact supported CLI version. F07 cleanup convergence and F08 provenance remain subject to the host boundaries above.
 
 ## ESLint conventions
 

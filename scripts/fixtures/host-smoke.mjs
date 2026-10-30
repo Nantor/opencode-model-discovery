@@ -1,11 +1,13 @@
 import { Model, Provider } from "@opencode/plugin";
 import { writeFile } from "node:fs/promises";
 import { ModelDiscoveryPlugin } from "../../dist/opencode-model-discovery.js";
+import { checkStorageParity } from "./storage-parity.mjs";
 
 // Executed by the real host, never by a simulated editor.
 export default {
   id: "model-discovery-host-smoke",
   async setup(ctx) {
+    const storageParity = await checkStorageParity(ctx.storage);
     const baseURL = process.env.SMOKE_URL;
     const register = () => ctx.provider.transform((editor) => {
       for (const enrich of [false, true]) {
@@ -68,7 +70,7 @@ export default {
           .find((model) => model.providerID === id && model.id === modelID);
       }
     }
-    await writeFile(process.env.SMOKE_RESULT, JSON.stringify({ version: ctx.app.version, before, candidates, api: models.data }, null, 2));
+    await writeFile(process.env.SMOKE_RESULT, JSON.stringify({ version: ctx.app.version, storageParity, before, candidates, api: models.data }, null, 2));
     return cleanup;
   },
 };

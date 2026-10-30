@@ -212,7 +212,9 @@ npm run deploy:local -- --variant=fallback
 
 ## Verification
 
-Run `npm run test:run`, `npm run lint`, and `npm run build` for unit tests, lint, typechecking, and both bundles. Run `npm run test:host` for the actual-host regression: it builds the plugin, starts isolated OpenCode **2.2.3** private servers with synthetic loopback HTTP discovery, and checks new/source-backed models, partial metadata, earlier policy edits, and later native configuration. HOME, XDG directories, and databases are isolated; the shared service is not used. Artifacts are retained under `/tmp/opencode/model-discovery-host-*` (`OPENCODE_SMOKE_TMP` overrides the parent).
+Run `npm run test:run`, `npm run lint`, and `npm run build` for unit tests, lint, typechecking, and both bundles. Run `npm run test:host` for the actual-host regression: it builds the plugin, starts isolated OpenCode **2.2.3** private servers with synthetic loopback HTTP discovery, and checks new/source-backed models, partial metadata, earlier policy edits, later native configuration, and memory/host storage pagination parity (limit boundaries, full traversal, prefixes, cursors, and Unicode ordering). HOME, XDG directories, and databases are isolated; the shared service is not used. Artifacts are retained under `/tmp/opencode/model-discovery-host-*` (`OPENCODE_SMOKE_TMP` overrides the parent).
+
+The exported `createMemoryStorage()` follows the supported host's scan pagination: omitted or `NaN` limits default to 100; numeric limits are floored and clamped to 1–1000. Keys and exclusive `after` cursors use UTF-8 byte ordering. `next` is the last returned key only when more matching entries remain.
 
 The smoke test requires the supported CLI version and fails on a version mismatch. To use a separate pinned binary:
 
