@@ -78,7 +78,7 @@ describe("V2 discovery token parameter encoding", () => {
     let transform: Parameters<Context["model"]["transform"]>[0] | undefined;
     const reload = vi.fn().mockResolvedValue(undefined);
     const ctx = {
-      provider: { transform: vi.fn() },
+      provider: { transform: vi.fn(async () => ({ dispose: async () => {} })) },
       model: { transform: vi.fn(async (cb) => { transform = cb; }), reload },
       storage: createMemoryStorage(),
     } as unknown as Context;

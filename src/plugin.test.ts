@@ -977,7 +977,7 @@ describe("ModelDiscoveryPlugin", () => {
       models: new Map(),
     };
     await ModelDiscoveryPlugin({
-      provider: { transform: vi.fn() },
+      provider: { transform: vi.fn(async () => ({ dispose: async () => {} })) },
       model: { transform: vi.fn(async (cb) => { transform = cb; }), reload },
       storage: createMemoryStorage(),
     } as unknown as Context);
@@ -1045,7 +1045,7 @@ describe("ModelDiscoveryPlugin", () => {
       models: new Map(),
     };
     const ctx = {
-      provider: { transform: vi.fn() },
+      provider: { transform: vi.fn(async () => ({ dispose: async () => {} })) },
       model: { transform: vi.fn(async (cb) => { transform = cb; }), reload },
       storage: createMemoryStorage(),
     } as unknown as Context;
@@ -1103,7 +1103,7 @@ describe("ModelDiscoveryPlugin", () => {
       models: new Map([["model-a", { name: "Custom" }], ["manual-only", { name: "Manual only" }]]),
     };
     const ctx = {
-      provider: { transform: vi.fn() },
+      provider: { transform: vi.fn(async () => ({ dispose: async () => {} })) },
       model: { transform: vi.fn(async (cb) => { transform = cb; }), reload },
       storage: createMemoryStorage(),
     } as unknown as Context;
@@ -1202,6 +1202,7 @@ describe("ModelDiscoveryPlugin", () => {
       provider: {
         transform: vi.fn().mockImplementation(async (cb) => {
           providerTransformCb = cb;
+          return { dispose: async () => {} };
         }),
       },
       model: {
@@ -1220,7 +1221,8 @@ describe("ModelDiscoveryPlugin", () => {
 
     const providerEditor = {
       list: () => [providerRecord],
-      update: vi.fn(),
+      get: () => providerRecord,
+      update: vi.fn((_id: string, update: (info: typeof providerRecord.provider) => void) => update(providerRecord.provider)),
     };
     providerTransformCb?.(providerEditor as never);
 

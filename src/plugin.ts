@@ -20,6 +20,7 @@ import {
 import { enhanceModelInfo, findModelsDevEntry, getModelsDevData } from "./models-dev.js";
 import { applyModelInfoDraft, materializeModelInfo, modelInfoDraft } from "./model.js";
 import { buildProviderConfig, modelLimitDraft } from "./provider.js";
+import { providerSettings } from "./provider-settings.js";
 import { errorMessage, fillMissingFields, safeLog } from "./utils.js";
 import type {
   LiteLLMModelInfoEntry,
@@ -409,20 +410,10 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> =>
   const discoveryFingerprint = createDiscoveryFingerprint();
   let disposed = false;
 
-  // This cleanup is independent of discovery. It can run before configured
-  // providers are materialized; the config provider transform will apply its
-  // own settings afterwards.
-  await ctx.provider.transform((editor) => {
-    for (const provider of editor.list()) {
-      editor.update(provider.provider.id, (info) => {
-        delete info.settings?.["opencode-model-discovery"];
-      });
-    }
-  });
+  const settings = await providerSettings(ctx, discoveryFingerprint);
 
   // Model transforms run after provider sources have been materialized. A
-  // provider transform registered here runs before OpenCode's configuration
-  // source and therefore cannot add inventory for configured providers.
+  // provider transform can precede sources registered later in startup.
   // ModelEditor.update can create a model for an available provider.
   await ctx.model.transform((editor) => {
     if (disposed) return;
@@ -435,10 +426,15 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> =>
     }
     for (const record of records) {
       const providerID = record.provider.id;
-      const provider = providerFromV2(record.provider);
+      const provider = providerFromV2(record.provider, settings.options(record));
       const pluginOptions = provider.options?.["opencode-model-discovery"];
       let previous = states.get(providerID);
-      const fingerprint = discoveryFingerprint({ provider: record.provider, sourceConnection: record.sourceConnection });
+      // Include the privately captured opt-in so moving cleanup does not change
+      // discovery identity, while actual input changes still invalidate F06 state.
+      const fingerprint = discoveryFingerprint({
+        provider: { ...record.provider, settings: provider.options },
+        sourceConnection: record.sourceConnection,
+      });
       if (pluginOptions?.discovery !== true || previous?.fingerprint !== fingerprint) {
         previous?.controller.abort();
         states.delete(providerID);
@@ -514,20 +510,25 @@ export const ModelDiscoveryPlugin = async (ctx: Context): Promise<() => void> =>
         });
       }
     }
+    settings.reconcile(records);
   });
   return () => {
     disposed = true;
+    settings.dispose();
     for (const state of states.values()) state.controller.abort();
     states.clear();
   };
 };
 
-function providerFromV2(info: Pick<Provider.Info, "id" | "name" | "settings">): OpenCodeProvider {
+function providerFromV2(
+  info: Pick<Provider.Info, "id" | "name" | "settings">,
+  pluginOptions: NonNullable<OpenCodeProvider["options"]>["opencode-model-discovery"],
+): OpenCodeProvider {
   const options = info.settings as OpenCodeProvider["options"];
   return {
     name: info.name,
     // Snapshot discovery inputs without cloning unrelated callable adapter options.
-    options: { ...options, "opencode-model-discovery": structuredClone(options?.["opencode-model-discovery"]) },
+    options: { ...options, "opencode-model-discovery": structuredClone(pluginOptions) },
   };
 }
 

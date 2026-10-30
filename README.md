@@ -81,7 +81,9 @@ Configure these settings separately for each provider under `providers.<provider
 
 Prefix and postfix matching is case-sensitive and does not change discovered model keys, request IDs, or display names. Empty or non-string entries are ignored.
 
-These settings are consumed by the plugin and are not passed to the underlying provider runtime. Provider connection settings such as `baseURL` and `apiKey` belong alongside the `opencode-model-discovery` object, not inside it.
+The plugin captures these settings separately and removes them from provider settings during registry reconciliation, including for providers registered after the plugin. Provider connection settings such as `baseURL` and `apiKey` belong alongside the `opencode-model-discovery` object, not inside it.
+
+V2 transforms run in registration order and have no post-provider cleanup hook. When the model transform observes a later provider source, the plugin replaces its cleanup registration after that source; the resulting provider/model rebuild uses cleaned settings. A provider-only read before this reconciliation can still expose the plugin settings, and an already-read snapshot is not modified retroactively. This is not a guarantee for runtimes that bypass model-registry reconciliation.
 
 ### Enrich existing models
 
